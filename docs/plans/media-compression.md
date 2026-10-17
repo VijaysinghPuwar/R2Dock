@@ -1,6 +1,6 @@
 # Plan: Compress audio and video before upload
 
-Status: **Planned. Not implemented.** Target release: 0.3.0.
+Status: **In progress.** Target release: 0.3.0. Step 1 is done (see Progress at the end).
 
 ## Goal
 
@@ -277,3 +277,9 @@ flowchart LR
 3. **FFmpeg delivery**: download on first use, pinned and SHA-256 verified, hosted on this repository's releases.
 4. **Video default**: Balanced, capped at 1080p.
 5. **Smallest mode**: offered as an opt-in mode (Opus and AV1, extensions change).
+
+## Progress
+
+| Step | Status | Notes |
+|---|---|---|
+| 1 | Done | `crates/r2dock-media`: `probe` (Symphonia 0.6, features `mp3`, `aac`, `alac`, `flac`, `pcm`, `isomp4`, `wav`, `aiff`, `id3v2`), `classify`, `plan` (ladder, never raising bitrate, sample rate, or channels, margin and marker checks, estimate), `keys` (output key). Decision table tests pass. On the three real audiobooks the probe takes under 1 ms each and the plan gives 50%, 33%, and 50% smaller at Speech 32 kbps; the 48 kbps file is skipped at Speech 48 kbps. Mono music targets are half the stereo bitrate (MP3 VBR about 85 or 60 kbps, Opus 64 kbps). |

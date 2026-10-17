@@ -1,0 +1,19 @@
+[package]
+name = "r2dock-media"
+description = "Audio and video compression planning for R2Dock: probing, classification, and the bitrate ladder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+symphonia = { version = "0.6", default-features = false, features = ["mp3", "aac", "alac", "flac", "pcm", "isomp4", "wav", "aiff", "id3v2"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

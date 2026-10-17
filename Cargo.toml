@@ -6,6 +6,7 @@ members = [
     "crates/r2dock-r2",
     "crates/r2dock-transfer",
     "crates/r2dock-testkit",
+    "crates/r2dock-media",
     "src-tauri",
     
 ]
