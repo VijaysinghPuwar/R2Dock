@@ -91,10 +91,13 @@ async fn upload_prepare_inner(
     let compression_prefs = state.settings.read().preferences.compression;
     let estimate = if compression_prefs.enabled {
         let mut files = std::mem::take(&mut items.files);
-        let ready = state.compression.ready();
+        let ffmpeg = state.compression.ffmpeg();
         let (files, estimate) = tokio::task::spawn_blocking(move || {
-            let e =
-                crate::planning::compression_estimate(&mut files, &compression_prefs.audio, ready);
+            let e = crate::planning::compression_estimate(
+                &mut files,
+                &compression_prefs,
+                ffmpeg.as_ref(),
+            );
             (files, e)
         })
         .await
@@ -186,6 +189,7 @@ async fn upload_start_inner(
         settings: prefs.audio,
         content: r2dock_media::classify::ContentOverride::Auto,
         on_failure: prefs.on_failure,
+        video: prefs.video,
     };
     let specs: Vec<JobSpec> = plan
         .files

@@ -77,6 +77,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
       minSavingPercent: 15,
       allowDownmix: false,
     },
+    video: { codec: "av1", size: "balanced1080" },
     onFailure: "uploadOriginal",
     encodeLimit: 1,
   },

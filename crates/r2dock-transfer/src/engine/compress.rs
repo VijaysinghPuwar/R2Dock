@@ -319,6 +319,7 @@ async fn compress_job(
             work_dir: &media.work_dir,
             stem: &stem,
             settings: &request.settings,
+            video: &request.video,
             content: request.content,
         },
         &control.cancel,

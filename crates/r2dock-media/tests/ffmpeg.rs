@@ -578,6 +578,7 @@ mod pipeline {
                 work_dir: work,
                 stem: "job-1",
                 settings: &AudioSettings::default(),
+                video: &r2dock_core::compression::VideoSettings::default(),
                 content: ContentOverride::Auto,
             },
             &CancellationToken::new(),

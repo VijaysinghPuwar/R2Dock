@@ -1,6 +1,6 @@
 # Plan: Compress audio and video before upload
 
-Status: **Audio released in 0.3.0** (steps 1 to 5). Video (step 6) is planned for 0.4.0, then step 7 completes the plan. See Progress at the end.
+Status: **Implemented.** Audio released in 0.3.0 (steps 1 to 5); video released in 0.4.0 (steps 6 and 7). See Progress at the end for every change from the original plan.
 
 ## Goal
 
@@ -300,3 +300,14 @@ Changes from the plan made during steps 3 and 4:
 - The download is larger than first estimated: about 18 MB for macOS (built with only what compression needs) and about 91 to 97 MB for Windows and Linux (BtbN's full LGPL builds, zstd-compressed per binary). ffprobe is included for the video step.
 - Each binary is a separate `.zst` asset instead of an archive, so nothing has to be extracted from a container.
 - While fixing the journal for compressed copies, two serde limits were found that stopped any journal with a multipart upload from loading (released in 0.2.1, see the CHANGELOG).
+
+| 6 | Done | Video: ffprobe JSON probe (`video::probe`), decisions (`video::plan`), encoder detection with a test encode per candidate (`video::encoders`), arguments (`video::args`), and the pipeline branch with sample test, one OpenH264 retry after a hardware failure, and ffprobe verification (`video::run`). Video files are checked with ffprobe first, because the in-process audio probe can see only the audio track of a video container. The macOS tools gained SVT-AV1 4.2.0 (`tools-ffmpeg-9.0.2-2`); the Windows and Linux builds already had SVT-AV1, OpenH264, and the hardware encoders. Real video: 936 MB to 285 MB (69.5%) in 355 s, VMAF 97.1. |
+| 7 | Done | Docs, notices, threat model, and the 0.4.0 release. |
+
+Changes from the plan made during step 6 (measurements in [docs/benchmarks/2026-10-17-video-encoders.md](../benchmarks/2026-10-17-video-encoders.md)):
+
+- The default video codec is AV1 (SVT-AV1, CRF 35), chosen with the user after measuring: about 30% of the source size at VMAF 96.7, against 89% at VMAF 94.8 for hardware H.264 at high quality. "Most compatible (H.264)" is the alternative. The plan's "Keep format" H.264 default with a 4.5 Mbps target would have left typical web videos unchanged.
+- Video settings are their own choices (codec and size) instead of following the audio "Keep format / Smallest" mode. Sizes compare the shorter side, so portrait phone videos are handled like landscape ones.
+- Quality comes from constant-quality modes (CRF and hardware quality settings); the estimate uses measured bitrates scaled by picture size and frame rate, and the sample test makes the final call.
+- Kept: every audio track (AAC 128 kbps, copied when already AAC at about that rate or less), text subtitles as `mov_text`, chapters, tags, rotation (applied by FFmpeg), variable frame rate. Dropped safely: timecode and Apple metadata tracks. Left unchanged: HDR, image subtitles, attachments, unknown data tracks (for example GoPro telemetry), cover art in video files is not kept.
+- HEVC is not offered, and 10-bit HDR is not converted.

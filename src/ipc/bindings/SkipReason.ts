@@ -3,4 +3,4 @@
 /**
  * Why a file is uploaded unchanged.
  */
-export type SkipReason = { "reason": "video" } | { "reason": "alreadyCompressedByR2dock", preset: string, } | { "reason": "tooSmall" } | { "reason": "tooShort" } | { "reason": "unknownDuration" } | { "reason": "unsupportedFormat" } | { "reason": "losslessKept" } | { "reason": "multichannel", channels: number, } | { "reason": "alreadyCompressed", kbps: number, } | { "reason": "savingTooSmall", percent: number, };
+export type SkipReason = { "reason": "video" } | { "reason": "alreadyCompressedByR2dock", preset: string, } | { "reason": "tooSmall" } | { "reason": "tooShort" } | { "reason": "unknownDuration" } | { "reason": "unsupportedFormat" } | { "reason": "losslessKept" } | { "reason": "multichannel", channels: number, } | { "reason": "alreadyCompressed", kbps: number, } | { "reason": "savingTooSmall", percent: number, } | { "reason": "videoOff" } | { "reason": "hdr" } | { "reason": "unsupportedStreams" } | { "reason": "noVideoEncoder" } | { "reason": "alreadyEfficient", codec: string, };

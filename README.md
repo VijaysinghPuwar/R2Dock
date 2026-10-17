@@ -30,7 +30,7 @@ Cloudflare R2 is cheap and fast object storage, but managing it usually means a 
 |---|---|
 | **Browse** | Buckets and folders, list and grid views, search, sorting, file details, image/text/audio previews |
 | **Transfer** | Drag-and-drop uploads, parallel multipart uploads for large files, resumable downloads, pause / resume / retry, continues after a restart |
-| **Compress** | Optional: shrinks MP3, M4A, WAV, and FLAC before upload (an audiobook at 64 kbps becomes about half the size); files that would not get smaller upload unchanged |
+| **Compress** | Optional: shrinks audio and video before upload (an audiobook at 64 kbps becomes half the size; a 1080p web video about a third, as AV1); files that would not get smaller upload unchanged |
 | **Manage** | New folder, rename, move, delete with confirmation, copy key or public link |
 | **Secure** | Keys in the OS keychain, strict app sandbox, safe local file handling |
 | **Logs** | Activity log as CSV (opens in Excel, Numbers, Google Sheets), names hidden by default, export by date range |
@@ -60,9 +60,14 @@ Cloudflare R2 is cheap and fast object storage, but managing it usually means a 
 
 > Builds are not code signed yet. On Windows choose *More info → Run anyway*; on macOS right-click the app and choose *Open*.
 
-## Audio compression
+## Audio and video compression
 
-Off by default. Turn it on in Settings > Compression and install the compression tools (FFmpeg, downloaded once from this project's releases and checked by SHA-256; about 18 MB on macOS, 91 MB on Windows, 97 MB on Linux). Uploads then compress audio on your computer first: speech to 32 kbps MP3, music to high-quality MP3, WAV to MP3 or FLAC. Your original files are never changed. Each file is probed, a 30 second sample is tested, and anything that would not shrink by at least 15% uploads as it is. Compare quality lets you listen to each setting first. Video compression is planned for a later version.
+Off by default. Turn it on in Settings > Compression and install the compression tools (FFmpeg, downloaded once from this project's releases and checked by SHA-256; about 20 MB on macOS, 91 MB on Windows, 97 MB on Linux). Uploads then compress on your computer first. Your original files are never changed.
+
+- Audio: speech to 32 kbps MP3, music to high-quality MP3, WAV to MP3 or FLAC. Compare quality lets you listen to each setting first.
+- Video: AV1 by default (about a third of the size at the same quality; plays in Chrome, Edge, Firefox, and Safari on recent Apple devices), or "Most compatible" H.264 with your computer's hardware encoder. Large videos are reduced to 1080p by default; HDR video is left as it is.
+
+Each file is probed, a 30 second sample is tested, and anything that would not shrink by at least 15% uploads as it is, with the reason shown.
 
 ## Where are the logs?
 

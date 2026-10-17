@@ -46,6 +46,13 @@ async fn installs_the_pinned_package_and_compresses() {
         "{info:?}"
     );
 
+    // Video: AV1 everywhere, and at least one H.264 encoder (hardware or
+    // OpenH264) must pass a test encode.
+    let video = r2dock_media::video::encoders::detect(&tools.ffmpeg, &info.encoders).await;
+    eprintln!("video encoders: {video:?}");
+    assert!(video.av1, "SVT-AV1 works");
+    assert!(video.h264.is_some(), "an H.264 encoder works");
+
     // Make a test file with the installed FFmpeg itself, then compress it.
     let input = root.path().join("talk.mp3");
     let status = std::process::Command::new(&tools.ffmpeg)
@@ -64,6 +71,7 @@ async fn installs_the_pinned_package_and_compresses() {
             work_dir: &work,
             stem: "live",
             settings: &AudioSettings::default(),
+            video: &r2dock_core::compression::VideoSettings::default(),
             content: ContentOverride::Auto,
         },
         &CancellationToken::new(),

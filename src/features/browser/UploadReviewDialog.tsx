@@ -48,11 +48,17 @@ function CompressionBox({
       </p>
     );
   }
-  const what = plural(estimate.files, "audio file");
+  const audioFiles = estimate.files - estimate.videoFiles;
+  const what = [
+    audioFiles > 0 ? plural(audioFiles, "audio file") : null,
+    estimate.videoFiles > 0 ? plural(estimate.videoFiles, "video") : null,
+  ]
+    .filter(Boolean)
+    .join(" and ");
   return (
     <div className="review-compression">
       <Switch
-        label="Compress audio before upload"
+        label={estimate.videoFiles > 0 ? "Compress audio and video before upload" : "Compress audio before upload"}
         description={`${what}. Estimated ${formatBytes(estimate.bytesBefore)} to ${formatBytes(estimate.bytesAfter)}.${
           estimate.unchanged > 0 ? ` ${plural(estimate.unchanged, "other audio file")} already small, uploaded as is.` : ""
         }`}

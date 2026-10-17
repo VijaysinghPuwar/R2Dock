@@ -70,7 +70,7 @@ describe("CompressionSection", () => {
     m.status.mockResolvedValue(notInstalled);
     const user = userEvent.setup();
     setup();
-    const sw = screen.getByRole("switch", { name: /Compress audio before upload/ });
+    const sw = screen.getByRole("switch", { name: /Compress audio and video before upload/ });
     expect(sw).toHaveAttribute("aria-checked", "false");
     await user.click(sw);
     await waitFor(() => expect(m.settingsSet).toHaveBeenCalled());
@@ -134,5 +134,18 @@ describe("CompressionSection", () => {
     expect(await screen.findByText(/^Speech 32 kbps \(MP3\)/)).toBeInTheDocument();
     expect(screen.getByText(/about 14\.4 MB per hour/)).toBeInTheDocument();
     expect(screen.getByLabelText("Speech 32 kbps (MP3) sample")).toHaveAttribute("src", expect.stringContaining("b".repeat(32)));
+  });
+
+  it("saves the video choices", async () => {
+    m.status.mockResolvedValue(ready);
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole("radio", { name: "Most compatible (H.264)" }));
+    await waitFor(() => expect(m.settingsSet).toHaveBeenCalled());
+    expect((m.settingsSet.mock.calls.at(-1)![0] as Preferences).compression.video.codec).toBe("h264");
+    await user.selectOptions(screen.getByLabelText("Video size"), "off");
+    await waitFor(() =>
+      expect((m.settingsSet.mock.calls.at(-1)![0] as Preferences).compression.video.size).toBe("off"),
+    );
   });
 });

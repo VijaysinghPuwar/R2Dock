@@ -13,3 +13,4 @@ pub mod preview;
 pub mod probe;
 pub mod tools;
 pub mod verify;
+pub mod video;

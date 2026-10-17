@@ -100,6 +100,8 @@ pub struct CompressionRequest {
     pub content: r2dock_media::classify::ContentOverride,
     #[serde(default)]
     pub on_failure: CompressionFailure,
+    #[serde(default)]
+    pub video: r2dock_core::compression::VideoSettings,
 }
 
 /// A compressed copy in R2Dock's work folder, uploaded instead of the original.

@@ -172,6 +172,7 @@ fn upload(
             settings: AudioSettings::default(),
             content: Default::default(),
             on_failure,
+            video: Default::default(),
         }),
         compressed: None,
     })
@@ -568,4 +569,86 @@ async fn restart_reuses_the_copy_and_edits_compress_again() {
     let j = wait_state(&h2.engine, ids[0], &[JobState::Completed, JobState::Failed]).await;
     assert_eq!(j.state, JobState::Completed, "{:?}", j.error);
     assert_eq!(started(&h2.events), 2, "compressed again after the edit");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn video_upload_becomes_av1_mp4() {
+    let Some(bin) = ffmpeg_bin() else { return };
+    let probe = bin.with_file_name(if cfg!(windows) {
+        "ffprobe.exe"
+    } else {
+        "ffprobe"
+    });
+    if !probe.is_file() {
+        return;
+    }
+    let listed = {
+        let out = Command::new(&bin)
+            .args(["-hide_banner", "-encoders"])
+            .output()
+            .unwrap();
+        r2dock_media::tools::detect::parse_encoders(&String::from_utf8_lossy(&out.stdout))
+    };
+    let encoders = r2dock_media::video::encoders::detect(&bin, &listed).await;
+    if !encoders.av1 {
+        eprintln!("no AV1 encoder; skipping");
+        return;
+    }
+    let h = harness_with(None, None, None).await;
+    h.engine.set_media(Some(MediaRuntime {
+        ffmpeg: Ffmpeg::new(bin.clone()).with_video(probe, encoders),
+        work_dir: h.work.clone(),
+        encode_limit: 1,
+    }));
+    let input = h.files.path().join("Holiday.mkv");
+    make(
+        &bin,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=1280x720:r=30:d=15",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=d=15",
+            "-c:v",
+            "mpeg4",
+            "-q:v",
+            "2",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "256k",
+            input.to_str().unwrap(),
+        ],
+    );
+    let original = std::fs::metadata(&input).unwrap().len();
+    let ids = h.engine.enqueue(
+        vec![upload(
+            input,
+            "videos/Holiday.mkv",
+            ConflictPolicy::Replace,
+            CompressionFailure::UploadOriginal,
+        )],
+        None,
+    );
+    let j = wait_state(&h.engine, ids[0], &[JobState::Completed, JobState::Failed]).await;
+    assert_eq!(j.state, JobState::Completed, "{:?}", j.error);
+    assert_eq!(j.key, "videos/Holiday.mp4");
+    let Some(CompressionView::Saved { bytes, preset, .. }) = j.compression else {
+        panic!("{:?}", j.compression);
+    };
+    assert_eq!(preset, "av1-crf35");
+    assert!(bytes * 2 < original);
+    let head = h
+        .client
+        .head_object(BUCKET, "videos/Holiday.mp4")
+        .await
+        .unwrap();
+    assert_eq!(
+        head.metadata.get("r2dock-compression").map(String::as_str),
+        Some("av1-crf35")
+    );
+    assert!(work_files(&h.work).is_empty());
 }

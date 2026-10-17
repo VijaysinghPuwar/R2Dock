@@ -10,6 +10,8 @@ use r2dock_media::ffmpeg::Ffmpeg;
 use r2dock_media::tools::detect::{self, BuildInfo};
 use r2dock_media::tools::install::{self, HttpFetch};
 use r2dock_media::tools::{Tools, ToolsError, manifest};
+use r2dock_media::video::encoders;
+use r2dock_media::video::plan::VideoEncoders;
 use r2dock_transfer::engine::MediaRuntime;
 use tokio_util::sync::CancellationToken;
 
@@ -22,6 +24,8 @@ pub struct CompressionService {
     /// Compressed copies waiting to upload (inside the app cache folder).
     pub work_dir: PathBuf,
     current: RwLock<Option<(Tools, BuildInfo)>>,
+    /// Video encoders that passed a test encode, for the current FFmpeg.
+    video: RwLock<VideoEncoders>,
     problem: RwLock<Option<String>>,
     installing: Mutex<Option<CancellationToken>>,
 }
@@ -47,6 +51,7 @@ impl CompressionService {
             tools_root,
             work_dir,
             current: RwLock::new(None),
+            video: RwLock::new(VideoEncoders::default()),
             problem: RwLock::new(None),
             installing: Mutex::new(None),
         }
@@ -55,8 +60,8 @@ impl CompressionService {
     /// Give the engine the current tools and encode limit (or none).
     pub fn apply(&self, state: &AppState) {
         let limit = usize::from(state.settings.read().preferences.compression.encode_limit);
-        let media = self.current.read().as_ref().map(|(t, _)| MediaRuntime {
-            ffmpeg: Ffmpeg::new(t.ffmpeg.clone()),
+        let media = self.ffmpeg().map(|ffmpeg| MediaRuntime {
+            ffmpeg,
             work_dir: self.work_dir.clone(),
             encode_limit: limit,
         });
@@ -86,6 +91,8 @@ impl CompressionService {
         };
         match result {
             Ok(ok) => {
+                // Prove each video encoder once per FFmpeg.
+                *self.video.write() = encoders::detect(&ok.0.ffmpeg, &ok.1.encoders).await;
                 *self.current.write() = Some(ok);
                 *self.problem.write() = None;
             }
@@ -200,12 +207,13 @@ impl CompressionService {
         Ok(())
     }
 
-    /// The FFmpeg to run now, if any.
+    /// The FFmpeg to run now, with ffprobe and the working video encoders.
     pub fn ffmpeg(&self) -> Option<Ffmpeg> {
+        let video = *self.video.read();
         self.current
             .read()
             .as_ref()
-            .map(|(t, _)| Ffmpeg::new(t.ffmpeg.clone()))
+            .map(|(t, _)| Ffmpeg::new(t.ffmpeg.clone()).with_video(t.ffprobe.clone(), video))
     }
 
     /// Whether compression can run now.

@@ -99,6 +99,7 @@ pub struct PrepareJob<'a> {
     /// A unique name for this job (the job id).
     pub stem: &'a str,
     pub settings: &'a AudioSettings,
+    pub video: &'a r2dock_core::compression::VideoSettings,
     pub content: ContentOverride,
 }
 
@@ -116,10 +117,27 @@ pub async fn prepare(
         stem,
         settings,
         content,
+        ..
     } = job;
     let path = input.to_path_buf();
+    let video_candidate = crate::video::run::is_video_candidate(input);
+    // Video containers are checked with ffprobe first: the in-process
+    // audio probe may see only the audio track of a video file.
+    if video_candidate
+        && let Some(ffprobe) = &ff.ffprobe
+        && crate::video::probe::probe_video(ffprobe, input)
+            .await
+            .is_some_and(|p| p.video().is_some())
+    {
+        return crate::video::run::prepare_video(ff, job, cancel, on_fraction).await;
+    }
     let probe = match tokio::task::spawn_blocking(move || probe_audio(&path)).await {
-        Ok(Ok(p)) => p,
+        // Audio-only MP4 and M4A stay on the audio path.
+        Ok(Ok(p)) if !p.has_video => p,
+        Ok(Ok(_)) => return crate::video::run::prepare_video(ff, job, cancel, on_fraction).await,
+        Ok(Err(ProbeError::Unsupported)) if video_candidate => {
+            return crate::video::run::prepare_video(ff, job, cancel, on_fraction).await;
+        }
         Ok(Err(ProbeError::Unsupported)) => return Ok(Prepared::Unchanged(Unchanged::NotAudio)),
         Ok(Err(ProbeError::Io(e))) => {
             return Err(EncodeError::Failed(format!(

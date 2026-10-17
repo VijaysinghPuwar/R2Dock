@@ -225,6 +225,8 @@ pub struct CompressionEstimate {
     pub bytes_after: u64,
     /// Audio files that would be uploaded as they are.
     pub unchanged: u32,
+    /// How many of `files` are videos.
+    pub video_files: u32,
     /// Keys whose extension changes (first 50).
     pub key_changes: Vec<KeyChange>,
     /// Total number of key changes.

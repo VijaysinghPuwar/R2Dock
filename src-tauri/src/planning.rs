@@ -28,13 +28,18 @@ const KEY_CHANGES_SHOWN: usize = 50;
 
 /// Decide compression for every file of an upload and sum it up for the
 /// review dialog. Reads file headers only. Blocking.
+/// `ffmpeg` is the ready FFmpeg, if any; without it videos are not
+/// estimated. Must run on a blocking thread inside the Tokio runtime.
 pub fn compression_estimate(
     files: &mut [crate::state::UploadFile],
-    settings: &r2dock_core::compression::AudioSettings,
-    tools_ready: bool,
+    prefs: &r2dock_core::compression::CompressionPrefs,
+    ffmpeg: Option<&r2dock_media::ffmpeg::Ffmpeg>,
 ) -> Option<crate::dto::CompressionEstimate> {
     use r2dock_media::classify::ContentOverride;
-    use r2dock_media::estimate::{FileDecision, decide_file};
+    use r2dock_media::estimate::{FileDecision, decide_file, decide_video};
+    let settings = &prefs.audio;
+    let tools_ready = ffmpeg.is_some();
+    let runtime = tokio::runtime::Handle::try_current().ok();
     use std::collections::HashMap;
 
     let mut est = crate::dto::CompressionEstimate {
@@ -42,6 +47,7 @@ pub fn compression_estimate(
         bytes_before: 0,
         bytes_after: 0,
         unchanged: 0,
+        video_files: 0,
         key_changes: Vec::new(),
         key_change_count: 0,
         collisions: Vec::new(),
@@ -49,14 +55,25 @@ pub fn compression_estimate(
     };
     let mut audio = 0u32;
     for f in files.iter_mut() {
-        let decision = decide_file(&f.local, &f.key, settings, ContentOverride::Auto);
+        let video = match (ffmpeg, &runtime) {
+            (Some(ff), Some(rt)) => {
+                rt.block_on(decide_video(ff, &f.local, &f.key, settings, &prefs.video))
+            }
+            _ => None,
+        };
+        let decision =
+            video.unwrap_or_else(|| decide_file(&f.local, &f.key, settings, ContentOverride::Auto));
         match &decision {
             FileDecision::Compress {
                 estimated_size,
                 new_key,
+                video,
             } => {
                 audio += 1;
                 est.files += 1;
+                if *video {
+                    est.video_files += 1;
+                }
                 est.bytes_before += f.size;
                 est.bytes_after += (*estimated_size).min(f.size);
                 if *new_key != f.key {
@@ -293,8 +310,8 @@ mod tests {
         ];
         let est = super::compression_estimate(
             &mut files,
-            &r2dock_core::compression::AudioSettings::default(),
-            true,
+            &r2dock_core::compression::CompressionPrefs::default(),
+            None,
         )
         .unwrap();
         assert_eq!(est.files, 2);
@@ -307,14 +324,15 @@ mod tests {
             vec!["x/a.mp3".to_string()],
             "a.wav becomes a.mp3"
         );
-        assert!(est.tools_ready);
+        assert!(!est.tools_ready);
+        assert_eq!(est.video_files, 0);
 
         let mut photos = vec![file(d.join("photo.jpg"), "photo.jpg")];
         assert!(
             super::compression_estimate(
                 &mut photos,
-                &r2dock_core::compression::AudioSettings::default(),
-                true
+                &r2dock_core::compression::CompressionPrefs::default(),
+                None
             )
             .is_none(),
             "no audio, no estimate"

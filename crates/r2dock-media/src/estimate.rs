@@ -29,6 +29,7 @@ pub enum FileDecision {
     Compress {
         estimated_size: u64,
         new_key: String,
+        video: bool,
     },
     /// An audio file that will be uploaded as it is.
     Unchanged(Unchanged),
@@ -61,9 +62,43 @@ pub fn decide_file(
         AudioDecision::Compress(t) => FileDecision::Compress {
             estimated_size: t.estimated_size,
             new_key: output_key(key, t.extension.as_deref()),
+            video: false,
         },
         AudioDecision::Skip(reason) => FileDecision::Unchanged(Unchanged::Plan { reason }),
     }
+}
+
+/// Decide a video file with ffprobe (no encoding). `None` when the file
+/// has no video stream (it may still be audio).
+pub async fn decide_video(
+    ff: &crate::ffmpeg::Ffmpeg,
+    path: &Path,
+    key: &str,
+    audio: &AudioSettings,
+    video: &r2dock_core::compression::VideoSettings,
+) -> Option<FileDecision> {
+    if !crate::video::run::is_video_candidate(path) {
+        return None;
+    }
+    let probe = crate::video::probe::probe_video(ff.ffprobe.as_ref()?, path).await?;
+    probe.video()?;
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    Some(
+        match crate::video::plan::plan_video(
+            &probe,
+            video,
+            &ff.video,
+            audio.min_saving_percent,
+            ext,
+        ) {
+            Ok(t) => FileDecision::Compress {
+                estimated_size: t.estimated_size,
+                new_key: output_key(key, t.extension.as_deref()),
+                video: true,
+            },
+            Err(reason) => FileDecision::Unchanged(Unchanged::Plan { reason }),
+        },
+    )
 }
 
 #[cfg(test)]
@@ -118,6 +153,7 @@ mod tests {
         let FileDecision::Compress {
             estimated_size,
             new_key,
+            ..
         } = d
         else {
             panic!("{d:?}");

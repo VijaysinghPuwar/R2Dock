@@ -29,6 +29,9 @@ import type { Mode } from "../../ipc/bindings/Mode";
 import type { MusicQuality } from "../../ipc/bindings/MusicQuality";
 import type { PreviewSample } from "../../ipc/bindings/PreviewSample";
 import type { SpeechQuality } from "../../ipc/bindings/SpeechQuality";
+import type { VideoCodec } from "../../ipc/bindings/VideoCodec";
+import type { VideoSettings } from "../../ipc/bindings/VideoSettings";
+import type { VideoSize } from "../../ipc/bindings/VideoSize";
 import { formatBytes } from "../../lib/format";
 import { mediaUrl } from "../../lib/media";
 import { NumberSetting } from "./NumberSetting";
@@ -47,6 +50,17 @@ const FAILURE_OPTIONS: Array<{ value: CompressionFailure; label: string }> = [
   { value: "uploadOriginal", label: "Upload the original" },
   { value: "skipFile", label: "Skip the file" },
 ];
+
+const SIZE_OPTIONS: Array<{ value: VideoSize; label: string }> = [
+  { value: "small720", label: "Small (720p)" },
+  { value: "balanced1080", label: "Balanced (1080p)" },
+  { value: "keep", label: "Keep resolution" },
+  { value: "off", label: "Don't compress video" },
+];
+
+function isVideoSize(v: string): v is VideoSize {
+  return SIZE_OPTIONS.some((o) => o.value === v);
+}
 
 function isFailure(v: string): v is CompressionFailure {
   return FAILURE_OPTIONS.some((o) => o.value === v);
@@ -201,12 +215,13 @@ export function CompressionSection() {
   const c = prefs.compression;
   const setC = (patch: Partial<CompressionPrefs>) => update({ compression: { ...c, ...patch } });
   const setAudio = (patch: Partial<AudioSettings>) => setC({ audio: { ...c.audio, ...patch } });
+  const setVideo = (patch: Partial<VideoSettings>) => setC({ video: { ...c.video, ...patch } });
 
   return (
     <Section id="compression" title="Compression">
       <Switch
-        label="Compress audio before upload"
-        description="Makes MP3, M4A, WAV, and FLAC files smaller on your computer before they upload. Your original files are never changed, and files that would not get smaller upload as they are."
+        label="Compress audio and video before upload"
+        description="Makes audio (MP3, M4A, WAV, FLAC) and video (MP4, MOV, MKV) smaller on your computer before they upload. Your original files are never changed, and files that would not get smaller upload as they are."
         checked={c.enabled}
         onChange={(enabled) => setC({ enabled })}
       />
@@ -257,6 +272,35 @@ export function CompressionSection() {
           ]}
         />
       </ControlRow>
+      <ControlRow
+        label="Video"
+        helper={
+          c.video.codec === "av1"
+            ? "About a third of the size. Plays in Chrome, Edge, Firefox, and Safari on recent Apple devices."
+            : "Plays everywhere. Saves less on videos that are already compressed."
+        }
+      >
+        <SegmentedControl<VideoCodec>
+          label="Video"
+          value={c.video.codec}
+          onChange={(codec) => setVideo({ codec })}
+          options={[
+            { value: "av1", label: "Smallest file (AV1)" },
+            { value: "h264", label: "Most compatible (H.264)" },
+          ]}
+        />
+      </ControlRow>
+      <Select
+        label="Video size"
+        fieldClassName="setting-select"
+        value={c.video.size}
+        options={SIZE_OPTIONS}
+        helper="The shorter side of the picture, so portrait phone videos are treated the same."
+        onChange={(e) => {
+          const v = e.target.value;
+          if (isVideoSize(v)) setVideo({ size: v });
+        }}
+      />
       <NumberSetting
         label="Minimum saving"
         unit="%"

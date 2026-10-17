@@ -45,6 +45,10 @@ impl EncodeError {
 pub struct Ffmpeg {
     pub bin: PathBuf,
     pub options: RunOptions,
+    /// ffprobe, needed for video.
+    pub ffprobe: Option<PathBuf>,
+    /// Video encoders that passed a test encode (see `video::encoders`).
+    pub video: crate::video::plan::VideoEncoders,
 }
 
 impl Ffmpeg {
@@ -52,11 +56,24 @@ impl Ffmpeg {
         Self {
             bin,
             options: RunOptions::default(),
+            ffprobe: None,
+            video: crate::video::plan::VideoEncoders::default(),
         }
     }
 
+    /// Add ffprobe and the detected video encoders.
+    pub fn with_video(
+        mut self,
+        ffprobe: PathBuf,
+        video: crate::video::plan::VideoEncoders,
+    ) -> Self {
+        self.ffprobe = Some(ffprobe);
+        self.video = video;
+        self
+    }
+
     /// Run and turn a failure into a message without local folders.
-    async fn run_clean(
+    pub(crate) async fn run_clean(
         &self,
         args: &[std::ffi::OsString],
         paths: &[&Path],

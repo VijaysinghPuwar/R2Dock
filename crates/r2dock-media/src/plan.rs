@@ -98,6 +98,16 @@ pub enum SkipReason {
     AlreadyCompressed { kbps: u32 },
     /// The projected saving is below the minimum.
     SavingTooSmall { percent: u8 },
+    /// Video compression is turned off.
+    VideoOff,
+    /// HDR video (converting it would wash out the colors).
+    Hdr,
+    /// Image subtitles, attachments, or data tracks MP4 cannot hold.
+    UnsupportedStreams,
+    /// No working video encoder on this computer.
+    NoVideoEncoder,
+    /// Already in a codec as efficient as the target.
+    AlreadyEfficient { codec: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

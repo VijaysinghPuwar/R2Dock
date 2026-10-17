@@ -76,6 +76,52 @@ impl Default for AudioSettings {
     }
 }
 
+/// Codec for compressed video.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum VideoCodec {
+    /// AV1: about a third of the size at the same quality. Plays in current
+    /// Chrome, Edge, and Firefox, and in Safari on recent Apple devices.
+    #[default]
+    Av1,
+    /// H.264: plays everywhere; saves less.
+    H264,
+}
+
+/// Largest picture for compressed video (the shorter side, so portrait
+/// phone videos are treated the same as landscape ones).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum VideoSize {
+    Small720,
+    #[default]
+    Balanced1080,
+    Keep,
+    /// Do not compress video.
+    Off,
+}
+
+impl VideoSize {
+    /// Largest short side in pixels, if any.
+    pub fn max_short_side(self) -> Option<u32> {
+        match self {
+            Self::Small720 => Some(720),
+            Self::Balanced1080 => Some(1080),
+            Self::Keep | Self::Off => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct VideoSettings {
+    pub codec: VideoCodec,
+    pub size: VideoSize,
+}
+
 /// What to do when compression fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -94,6 +140,7 @@ pub struct CompressionPrefs {
     /// Compress audio before upload. Off by default.
     pub enabled: bool,
     pub audio: AudioSettings,
+    pub video: VideoSettings,
     pub on_failure: CompressionFailure,
     /// Files compressed at the same time (1 to 4).
     pub encode_limit: u8,
@@ -104,6 +151,7 @@ impl Default for CompressionPrefs {
         Self {
             enabled: false,
             audio: AudioSettings::default(),
+            video: VideoSettings::default(),
             on_failure: CompressionFailure::UploadOriginal,
             encode_limit: 1,
         }
@@ -132,6 +180,17 @@ mod tests {
         assert_eq!(p.audio.mode, Mode::KeepFormat);
         assert_eq!(p.audio.min_saving_percent, 15);
         assert_eq!(p.encode_limit, 1);
+        assert_eq!(p.video.codec, VideoCodec::Av1);
+        assert_eq!(p.video.size, VideoSize::Balanced1080);
+        assert_eq!(VideoSize::Small720.max_short_side(), Some(720));
+        assert_eq!(VideoSize::Keep.max_short_side(), None);
+    }
+
+    #[test]
+    fn older_settings_get_video_defaults() {
+        let p: CompressionPrefs = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert!(p.enabled);
+        assert_eq!(p.video, VideoSettings::default());
     }
 
     #[test]

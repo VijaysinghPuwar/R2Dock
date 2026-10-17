@@ -669,7 +669,7 @@ Transfer row (`TransferRow`), 56 px tall:
 
 **Failed tab**: each row shows a plain-language reason and a primary "Retry" action, plus "Details" with error code and an "Open activity log" link. Bulk "Retry all".
 
-**Compression in rows**: while compressing, the status reads "Compressing 42%" (Pause stops the encode; Resume starts it again). A finished upload adds "Saved 330 MB (50%)", or "Not compressed: Already compressed (48 kbps)", "Not compressed: Would save only 6%", "Not compressed: Compression tools are not installed", or "Compression failed; uploaded the original". Non-audio files show nothing about compression.
+**Compression in rows**: while compressing, the status reads "Compressing 42%" (Pause stops the encode; Resume starts it again). A finished upload adds "Saved 330 MB (50%)", or "Not compressed: Already compressed (48 kbps)", "Not compressed: Would save only 6%", "Not compressed: Compression tools are not installed", "Not compressed: HDR video kept as is", "Not compressed: Already efficient (HEVC)", or "Compression failed; uploaded the original". The review box counts "12 audio files and 3 videos" and its switch reads "Compress audio and video before upload" when videos are included. Non-audio files show nothing about compression.
 
 ### Screen 6: File Preview and Details (`PreviewModal`, `DetailsPanel`)
 
@@ -721,11 +721,12 @@ Layout: left sub-navigation (200 px) and content area (max 720 px). Sections and
 - Advanced (collapsed): Upload in parts for files larger than [100] MB; bandwidth limit (off by default, later release).
 
 **Compression** (its own section, after Transfers)
-- Switch "Compress audio before upload": Off (default). Helper: "Makes MP3, M4A, WAV, and FLAC files smaller on your computer before they upload. Your original files are never changed, and files that would not get smaller upload as they are."
+- Switch "Compress audio and video before upload": Off (default). Helper: "Makes audio (MP3, M4A, WAV, FLAC) and video (MP4, MOV, MKV) smaller on your computer before they upload. Your original files are never changed, and files that would not get smaller upload as they are."
 - Tools block (`bg.inset`): not installed: "Compression tools are not installed (17.5 MB download)." with **Install compression tools** and "Use FFmpeg from my system..."; installing: "Downloading compression tools: 8.0 MB of 17.5 MB", progress bar, Cancel; ready: "FFmpeg 9.0.2 (LGPL 3), downloaded and checked by R2Dock." with Remove tools, or "from your system" with the path and "Use downloaded tools"; unusable: warning banner "The chosen FFmpeg cannot be used: ...".
 - Compare quality: "Choose a file..." encodes 30 seconds at each setting and lists them with an audio player and "about 14.4 MB per hour".
 - Format: Keep format (default) or Smallest (helper changes to "Speech becomes Opus (.opus); file names change.").
 - Speech quality: 32 kbps (default) or 48 kbps. Music quality: Standard (default) or Smaller. WAV and other lossless audio: MP3 (default; Opus in Smallest), FLAC (lossless), Keep.
+- Video: segmented "Smallest file (AV1)" (default; helper "About a third of the size. Plays in Chrome, Edge, Firefox, and Safari on recent Apple devices.") or "Most compatible (H.264)" (helper "Plays everywhere. Saves less on videos that are already compressed."). Video size: Small (720p), Balanced (1080p, default), Keep resolution, Don't compress video; helper "The shorter side of the picture, so portrait phone videos are treated the same."
 - Minimum saving: 15% (5 to 50). If compression fails: Upload the original (default) or Skip the file. Files compressed at the same time: 1 (default) to 4.
 
 **Security**

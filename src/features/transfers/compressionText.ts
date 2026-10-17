@@ -8,7 +8,17 @@ import { formatBytes } from "../../lib/format";
 function skipText(reason: SkipReason): string {
   switch (reason.reason) {
     case "video":
-      return "Video is not compressed yet";
+      return "Video is handled separately";
+    case "videoOff":
+      return "Video compression is off";
+    case "hdr":
+      return "HDR video kept as is";
+    case "unsupportedStreams":
+      return "Has tracks MP4 cannot hold";
+    case "noVideoEncoder":
+      return "No video encoder on this computer";
+    case "alreadyEfficient":
+      return `Already efficient (${reason.codec.toUpperCase()})`;
     case "alreadyCompressedByR2dock":
       return "Already compressed by R2Dock";
     case "tooSmall":
@@ -34,7 +44,7 @@ function skipText(reason: SkipReason): string {
 export function unchangedText(reason: Unchanged): string {
   switch (reason.kind) {
     case "notAudio":
-      return "Not audio";
+      return "Not audio or video";
     case "plan":
       return skipText(reason.reason);
     case "sampleSavedTooLittle":

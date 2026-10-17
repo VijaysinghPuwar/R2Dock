@@ -1,7 +1,7 @@
 # R2Dock Technical Plan
 
 Version: 0.1
-Status: Version 0.3.0 implements Phases 1 to 5 plus the CSV activity log and audio compression (see section 17.1 for what is done and what remains). Items still marked **[Verify]** have not been checked against a real R2 bucket.
+Status: Version 0.4.0 implements Phases 1 to 5 plus the CSV activity log and audio and video compression (see section 17.1 for what is done and what remains). Items still marked **[Verify]** have not been checked against a real R2 bucket.
 
 > The product name is R2Dock (decided 2026-10-17). The name should still live in one place in code (app config and a constants module).
 
@@ -851,7 +851,7 @@ r2dock/
 
 MVP = Phases 0 to 7 with items marked M. "Should have" items may slip to v1.1 without blocking release.
 
-### 17.1 Implementation status (0.3.0)
+### 17.1 Implementation status (0.4.0)
 
 | Phase | Status |
 |---|---|
@@ -861,7 +861,8 @@ MVP = Phases 0 to 7 with items marked M. "Should have" items may slip to v1.1 wi
 | 3 Browser | Done: buckets, prefix navigation, pagination, virtualization, sorting, list/grid, details, prefix search, empty and error states. |
 | 4 Transfers | Done: single and multipart upload, resumable downloads, drag and drop, conflict policies, pause/resume/cancel/retry, history, restart journal. |
 | 5 Management | Done: new folder, delete with tokens and typed confirmation, rename and move with partial failure reports, copy key, public URL, image/text/audio previews, favorites, size calculation. |
-| 0.3.0 Audio compression | Done: optional audio compression before upload, plan steps 1 to 5. See [docs/plans/media-compression.md](docs/plans/media-compression.md). Video compression (step 6) is next. |
+| 0.4.0 Video compression | Done: AV1 (default) or H.264 video compression, plan steps 6 and 7. See [docs/plans/media-compression.md](docs/plans/media-compression.md) and [docs/benchmarks/2026-10-17-video-encoders.md](docs/benchmarks/2026-10-17-video-encoders.md). |
+| 0.3.0 Audio compression | Done: optional audio compression before upload, plan steps 1 to 5. See [docs/plans/media-compression.md](docs/plans/media-compression.md). |
 | 0.2.0 Logs | Done: CSV activity log, Settings > Advanced > Logs (locations, Open folder, Copy path, Change, Reset to default, export by date range), Help menu entry on macOS and in the shortcut sheet, "Open activity log" in error details. See [docs/plans/logs-and-csv.md](docs/plans/logs-and-csv.md). |
 | 6 Hardening | Not started: benchmarks, accessibility audit, usability tests, soak tests. |
 | 7 Packaging | Partly done: unsigned installers built by CI. Code signing, notarization, and the updater are not done. |
@@ -1028,7 +1029,7 @@ No test results are claimed in this plan. None have been run.
 
 - **Done in 0.2.0:** log folder access in Settings and a CSV activity log: [docs/plans/logs-and-csv.md](docs/plans/logs-and-csv.md).
 - **Done in 0.3.0:** optional audio compression before upload: [docs/plans/media-compression.md](docs/plans/media-compression.md).
-- **Next (0.4.0):** video compression (step 6 of the same plan).
+- **Done in 0.4.0:** video compression (steps 6 and 7 of the same plan).
 
 - Presigned share links with expiry picker and warnings (v1.1).
 - Video and PDF previews.

@@ -32,7 +32,7 @@ pub const VERSION: &str = "9.0.2";
 /// Release that holds the packages. A new build gets a new release tag;
 /// existing assets are never replaced.
 pub const RELEASE_URL: &str =
-    "https://github.com/VijaysinghPuwar/R2Dock/releases/download/tools-ffmpeg-9.0.2-1/";
+    "https://github.com/VijaysinghPuwar/R2Dock/releases/download/tools-ffmpeg-9.0.2-2/";
 
 /// The pinned packages, from the `MANIFEST.txt` of the release above.
 /// Platforms match `std::env::consts` (`<os>-<arch>`).
@@ -71,30 +71,30 @@ pub const PACKAGES: &[Package] = &[
         platform: "macos-aarch64",
         ffmpeg: Asset {
             file: "ffmpeg-9.0.2-macos-aarch64.zst",
-            download_sha256: "272fa8899ba0f1833ea831d34f38e0d156ee41c66bfc9cd0ddf492d9ad0d615d",
-            binary_sha256: "a3c80c908c32059a92bfbeeb2d25dcaaed0e762098a2c7dceea7236f04067c06",
-            download_size: 8_813_112,
+            download_sha256: "3db60ab5f2925cf9f1adb7dbfbab27b9f7457c4849b7e8d462d5d0a20120bd8c",
+            binary_sha256: "a843b6c32039acee286f9d92e50edf912ab39e28003f0623e9e221171289832e",
+            download_size: 10_251_398,
         },
         ffprobe: Asset {
             file: "ffprobe-9.0.2-macos-aarch64.zst",
-            download_sha256: "6403f3395e3ec66fe02c3b0c51fdd2f954ef9422021e29c94b72d5866583aefa",
-            binary_sha256: "583ddcf9afc92a5ba483eb235261033fb40359b2b163cdda782db65b36b0019f",
-            download_size: 8_733_877,
+            download_sha256: "3925c4d96da74b3c1666a7cbc41703addd051feda05c2bdcb3a65e096bca1506",
+            binary_sha256: "57a1ed4ff09271076ebce9a5eae8295750279125fbab3d8798159af25555d5d3",
+            download_size: 10_170_888,
         },
     },
     Package {
         platform: "macos-x86_64",
         ffmpeg: Asset {
             file: "ffmpeg-9.0.2-macos-x86_64.zst",
-            download_sha256: "9f76e17abb64c6ffdd7f1d0c5cbc70a597568a6976a69ae9ec992c12aeb1aac0",
-            binary_sha256: "1f3aa8d921f252ac6130a24c3cab3bfde42457274284599f9cbaf6341e018661",
-            download_size: 9_558_320,
+            download_sha256: "264f93a6c1727bf1442c61b1b3cc28ae05d510d796ef3b336a50274536e46a65",
+            binary_sha256: "cc6518591d09000b88780114dd0a7f72f39124cbc03c6f1754f6a4764b2339f3",
+            download_size: 11_739_019,
         },
         ffprobe: Asset {
             file: "ffprobe-9.0.2-macos-x86_64.zst",
-            download_sha256: "467bf08a8786e71efd67fb6e428a63a134487256e6d7573de44d74ed6dfc559e",
-            binary_sha256: "fd4518291d5f4f6ff2cab3d7343ac776eec7d6af9fc0cdb5633d2a980746d455",
-            download_size: 9_471_306,
+            download_sha256: "b238fc863f34cc9845e2c42fa08f5dd56966248db53a9a690f9f68dc7980ffca",
+            binary_sha256: "c818b724d4d868f3ed998961fc446d0b53b1a06b5cf00172942454482a90a72d",
+            download_size: 11_654_297,
         },
     },
 ];

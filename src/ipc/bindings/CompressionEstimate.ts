@@ -14,6 +14,10 @@ files: number, bytesBefore: number, bytesAfter: number,
  */
 unchanged: number, 
 /**
+ * How many of `files` are videos.
+ */
+videoFiles: number, 
+/**
  * Keys whose extension changes (first 50).
  */
 keyChanges: Array<KeyChange>, 
