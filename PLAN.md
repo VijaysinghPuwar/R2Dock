@@ -352,11 +352,13 @@ One client per (connection, jurisdiction), built lazily and cached in memory. Re
 |---|---|---|---|---|
 | Admin Read & Write | Yes | Yes | Yes | Account [Confirmed] |
 | Admin Read only | Yes | Yes | No | Account [Confirmed] |
-| Object Read & Write | Probably no | Yes | Yes | Selected buckets [Confirmed]; ListBuckets behavior [Verify] |
+| Object Read & Write | No: `ListBuckets` returns `AccessDenied` even when the token covers all buckets [Confirmed 2026-10-17 against real R2] | Yes, by bucket name | Yes | Selected or all buckets [Confirmed] |
 | Object Read only | Probably no | Yes | No | Selected buckets [Verify] |
 
 App behavior:
-- Test with `ListBuckets`. If access denied and a bucket was entered, test `ListObjectsV2` with `max-keys=1` on that bucket. Save the bucket list for scoped tokens in connection config.
+- Test with `ListBuckets`. If access denied and a bucket was entered, test `ListObjectsV2` with `max-keys=1` on that bucket. Save the bucket list for scoped tokens in connection config. The Connect form accepts several bucket names separated by commas.
+- A wrong secret returns `SignatureDoesNotMatch` (403), not `AccessDenied` [Confirmed 2026-10-17], so `AccessDenied` on `ListBuckets` means the key works but is an object-level token.
+- A read-only live check lives in `crates/r2dock-r2/tests/live_r2.rs` (ignored by default; run with `--ignored` and the `R2DOCK_LIVE_*` environment variables).
 - Detect read-only tokens lazily: the first denied write marks the connection read-only in the UI and disables write actions, with an explanation. Do not probe with test writes.
 - The help text recommends Object Read & Write scoped to specific buckets.
 
