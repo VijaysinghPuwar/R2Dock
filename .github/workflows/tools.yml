@@ -1,0 +1,171 @@
+name: Compression tools
+
+# Builds the pinned FFmpeg packages that R2Dock downloads on first use and
+# publishes them as assets of a `tools-ffmpeg-<version>-<build>` release.
+# Run by hand. A release tag is never reused; a new build gets a new tag,
+# and the app pins the new SHA-256 sums in crates/r2dock-media/src/tools/manifest.rs.
+#
+# Windows and Linux: BtbN FFmpeg-Builds, LGPL, 9.0 branch, month-end build
+# (kept for two years by BtbN), mirrored here so it can never change.
+# macOS: built from pinned sources by tools/ffmpeg/build-macos.sh.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build:
+        description: Build number for the release tag (tools-ffmpeg-9.0.2-<build>)
+        required: true
+        default: "1"
+
+permissions:
+  contents: read
+
+env:
+  VERSION: 9.0.2
+  BTBN_RELEASE: autobuild-2026-09-30-13-08
+  BTBN_NAME: ffmpeg-n9.0.2-17-g2a571b6068
+
+jobs:
+  mirror:
+    name: Mirror ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      matrix:
+        include:
+          - platform: windows-x86_64
+            os: windows-latest
+            asset: win64-lgpl-9.0.zip
+            sha256: 6b264b9e6019103f601d98c292bd332fd87acf1c5e941ddff4fb71760fe63432
+            ext: .exe
+          - platform: linux-x86_64
+            os: ubuntu-24.04
+            asset: linux64-lgpl-9.0.tar.xz
+            sha256: 2d41cbea0ca1a15029b638330740f78d6f5aeb062355bf425433fc938705350a
+            ext: ""
+    steps:
+      - name: Install zstd (Windows)
+        if: runner.os == 'Windows'
+        run: choco install zstandard -y --no-progress
+      - name: Download and verify
+        run: |
+          file="$BTBN_NAME-${{ matrix.asset }}"
+          curl -fsSL --retry 3 -o "$file" "https://github.com/BtbN/FFmpeg-Builds/releases/download/$BTBN_RELEASE/$file"
+          echo "${{ matrix.sha256 }}  $file" | sha256sum -c -
+          case "$file" in
+            *.zip) 7z x -y "$file" > /dev/null ;;
+            *) tar -xf "$file" ;;
+          esac
+          mkdir out
+          for bin in ffmpeg ffprobe; do
+            cp "$BTBN_NAME"-*/bin/"${bin}${{ matrix.ext }}" out/
+          done
+          cp "$BTBN_NAME"-*/LICENSE.txt out/LICENSE-FFmpeg.txt
+      - name: Check the license and run a smoke test
+        run: |
+          ./out/ffmpeg -hide_banner -version | tee version.txt
+          if grep -q -- "--enable-gpl" version.txt; then echo "error: GPL build" >&2; exit 1; fi
+          ./out/ffmpeg -hide_banner -f lavfi -i sine=d=2 -c:a libmp3lame -b:a 32k -f mp3 -y smoke.mp3
+          ./out/ffmpeg -hide_banner -f lavfi -i sine=d=2 -c:a libopus -b:a 24k -f opus -y smoke.opus
+          ./out/ffprobe -hide_banner -v error -show_format smoke.mp3
+      - name: Compress
+        run: |
+          cd out
+          for bin in ffmpeg ffprobe; do
+            name="$bin-$VERSION-${{ matrix.platform }}${{ matrix.ext }}"
+            mv "${bin}${{ matrix.ext }}" "$name"
+            sha256sum "$name" | awk '{print $1}' > "$name.sha256"
+            zstd -19 -T0 -q --rm "$name" -o "$name.zst"
+          done
+          mv LICENSE-FFmpeg.txt "LICENSE-FFmpeg-${{ matrix.platform }}.txt"
+          ls -la
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tools-${{ matrix.platform }}
+          path: out/*
+
+  macos:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - platform: macos-aarch64
+            os: macos-15
+          - platform: macos-x86_64
+            os: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build tools
+        run: |
+          brew install nasm pkgconf zstd
+          tools/ffmpeg/build-macos.sh "$RUNNER_TEMP/work" out
+      - name: Smoke test
+        run: |
+          ./out/ffmpeg -hide_banner -f lavfi -i sine=d=2 -c:a libmp3lame -b:a 32k -f mp3 -y smoke.mp3
+          ./out/ffmpeg -hide_banner -f lavfi -i sine=d=2 -c:a libopus -b:a 24k -f opus -y smoke.opus
+          ./out/ffprobe -hide_banner -v error -show_format smoke.mp3
+          lipo -archs out/ffmpeg
+      - name: Compress
+        run: |
+          cd out
+          for bin in ffmpeg ffprobe; do
+            name="$bin-$VERSION-${{ matrix.platform }}"
+            mv "$bin" "$name"
+            shasum -a 256 "$name" | awk '{print $1}' > "$name.sha256"
+            zstd -19 -T0 -q --rm "$name" -o "$name.zst"
+          done
+          for f in LICENSE-*.txt; do mv "$f" "${f%.txt}-${{ matrix.platform }}.txt"; done
+          ls -la
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tools-${{ matrix.platform }}
+          path: out/*
+
+  publish:
+    name: Publish release
+    needs: [mirror, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Write checksums and the manifest snippet
+        run: |
+          cd dist
+          sha256sum ./*.zst | sed "s#  ./#  #" > SHA256SUMS.txt
+          {
+            for zst in *.zst; do
+              bin="${zst%.zst}"
+              echo "$zst download=$(sha256sum "$zst" | awk '{print $1}') binary=$(cat "$bin.sha256") size=$(stat -c %s "$zst")"
+            done
+          } > MANIFEST.txt
+          rm -f ./*.sha256
+          cat MANIFEST.txt
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: tools-ffmpeg-${{ env.VERSION }}-${{ inputs.build }}
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "error: $TAG already exists; use a new build number" >&2
+            exit 1
+          fi
+          cat > notes.md <<NOTES
+          FFmpeg $VERSION for R2Dock's optional audio and video compression. R2Dock downloads these files on first use and checks every SHA-256 before running anything. This is not an R2Dock app release.
+
+          License: LGPL v3 (built with --enable-version3; no GPL or nonfree components). FFmpeg runs as a separate program.
+
+          Sources:
+          - Windows and Linux: BtbN FFmpeg-Builds, LGPL variant, 9.0 branch, release $BTBN_RELEASE (build scripts: https://github.com/BtbN/FFmpeg-Builds). FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/n9.0.2
+          - macOS: built by tools/ffmpeg/build-macos.sh at commit $GITHUB_SHA from https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz, LAME 3.100 (LGPL), and Opus 1.5.2 (BSD).
+          NOTES
+          sed -i 's/^          //' notes.md
+          gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" \
+            --title "Compression tools: FFmpeg $VERSION (build ${{ inputs.build }})" \
+            --notes-file notes.md --prerelease --latest=false --target "$GITHUB_SHA"

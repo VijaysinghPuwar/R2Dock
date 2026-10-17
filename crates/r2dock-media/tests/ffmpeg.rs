@@ -538,3 +538,29 @@ async fn missing_binary_is_a_spawn_error() {
     .unwrap_err();
     assert!(matches!(err, RunError::Spawn(_)), "{err:?}");
 }
+
+#[tokio::test]
+async fn inspects_ffmpeg_and_accepts_it_as_system_tools() {
+    use r2dock_media::tools::detect::{inspect, use_system};
+    let Some(bin) = ffmpeg_bin() else { return };
+    let info = inspect(&bin).await.unwrap();
+    assert!(!info.version.is_empty());
+    assert!(
+        info.audio.mp3 && info.audio.aac && info.audio.flac,
+        "{info:?}"
+    );
+    let (tools, _) = use_system(&bin).await.unwrap();
+    assert!(tools.ffprobe.is_file());
+    eprintln!("FFmpeg {} ({:?})", info.version, info.license);
+}
+
+#[tokio::test]
+async fn rejects_files_that_are_not_ffmpeg() {
+    use r2dock_media::tools::detect::use_system;
+    let dir = tempfile::tempdir().unwrap();
+    let fake = dir.path().join("ffmpeg");
+    std::fs::write(&fake, b"not a program").unwrap();
+    assert!(use_system(&fake).await.is_err());
+    assert!(use_system(dir.path()).await.is_err(), "a folder is refused");
+    assert!(use_system(&dir.path().join("missing")).await.is_err());
+}

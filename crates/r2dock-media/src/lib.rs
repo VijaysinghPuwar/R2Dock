@@ -8,4 +8,5 @@ pub mod ffmpeg;
 pub mod keys;
 pub mod plan;
 pub mod probe;
+pub mod tools;
 pub mod verify;

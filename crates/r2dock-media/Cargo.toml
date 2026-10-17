@@ -8,15 +8,21 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+hex.workspace = true
 process-wrap = { version = "10", default-features = false, features = ["tokio1", "job-object", "kill-on-drop", "process-group"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2"] }
 serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
 symphonia = { version = "0.6", default-features = false, features = ["mp3", "aac", "alac", "flac", "pcm", "isomp4", "ogg", "wav", "aiff", "id3v2"] }
+tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["process"] }
 tokio-util.workspace = true
+zstd = "0.13"
 
 [dev-dependencies]
-tempfile.workspace = true
+tokio = { workspace = true, features = ["process", "macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true
