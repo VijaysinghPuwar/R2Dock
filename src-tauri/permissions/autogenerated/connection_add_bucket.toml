@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-connection-add-bucket"
+description = "Enables the connection_add_bucket command without any pre-configured scope."
+commands.allow = ["connection_add_bucket"]
+
+[[permission]]
+identifier = "deny-connection-add-bucket"
+description = "Denies the connection_add_bucket command without any pre-configured scope."
+commands.deny = ["connection_add_bucket"]

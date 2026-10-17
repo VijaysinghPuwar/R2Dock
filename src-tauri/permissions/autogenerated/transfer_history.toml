@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-transfer-history"
+description = "Enables the transfer_history command without any pre-configured scope."
+commands.allow = ["transfer_history"]
+
+[[permission]]
+identifier = "deny-transfer-history"
+description = "Denies the transfer_history command without any pre-configured scope."
+commands.deny = ["transfer_history"]

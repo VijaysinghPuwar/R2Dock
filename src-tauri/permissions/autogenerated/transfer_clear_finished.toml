@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-transfer-clear-finished"
+description = "Enables the transfer_clear_finished command without any pre-configured scope."
+commands.allow = ["transfer_clear_finished"]
+
+[[permission]]
+identifier = "deny-transfer-clear-finished"
+description = "Denies the transfer_clear_finished command without any pre-configured scope."
+commands.deny = ["transfer_clear_finished"]

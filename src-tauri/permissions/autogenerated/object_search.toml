@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-object-search"
+description = "Enables the object_search command without any pre-configured scope."
+commands.allow = ["object_search"]
+
+[[permission]]
+identifier = "deny-object-search"
+description = "Denies the object_search command without any pre-configured scope."
+commands.deny = ["object_search"]

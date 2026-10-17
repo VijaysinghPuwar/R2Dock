@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-prefix-size"
+description = "Enables the prefix_size command without any pre-configured scope."
+commands.allow = ["prefix_size"]
+
+[[permission]]
+identifier = "deny-prefix-size"
+description = "Denies the prefix_size command without any pre-configured scope."
+commands.deny = ["prefix_size"]

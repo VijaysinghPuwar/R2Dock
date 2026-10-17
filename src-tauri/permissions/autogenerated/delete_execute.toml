@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-execute"
+description = "Enables the delete_execute command without any pre-configured scope."
+commands.allow = ["delete_execute"]
+
+[[permission]]
+identifier = "deny-delete-execute"
+description = "Denies the delete_execute command without any pre-configured scope."
+commands.deny = ["delete_execute"]

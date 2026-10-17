@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-transfer-pause-all"
+description = "Enables the transfer_pause_all command without any pre-configured scope."
+commands.allow = ["transfer_pause_all"]
+
+[[permission]]
+identifier = "deny-transfer-pause-all"
+description = "Denies the transfer_pause_all command without any pre-configured scope."
+commands.deny = ["transfer_pause_all"]

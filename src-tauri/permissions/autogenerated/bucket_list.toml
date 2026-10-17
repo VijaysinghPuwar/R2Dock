@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-bucket-list"
+description = "Enables the bucket_list command without any pre-configured scope."
+commands.allow = ["bucket_list"]
+
+[[permission]]
+identifier = "deny-bucket-list"
+description = "Denies the bucket_list command without any pre-configured scope."
+commands.deny = ["bucket_list"]

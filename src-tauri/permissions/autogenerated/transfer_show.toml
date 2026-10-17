@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-transfer-show"
+description = "Enables the transfer_show command without any pre-configured scope."
+commands.allow = ["transfer_show"]
+
+[[permission]]
+identifier = "deny-transfer-show"
+description = "Denies the transfer_show command without any pre-configured scope."
+commands.deny = ["transfer_show"]

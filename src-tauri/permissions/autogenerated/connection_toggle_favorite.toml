@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-connection-toggle-favorite"
+description = "Enables the connection_toggle_favorite command without any pre-configured scope."
+commands.allow = ["connection_toggle_favorite"]
+
+[[permission]]
+identifier = "deny-connection-toggle-favorite"
+description = "Denies the connection_toggle_favorite command without any pre-configured scope."
+commands.deny = ["connection_toggle_favorite"]
