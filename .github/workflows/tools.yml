@@ -69,6 +69,8 @@ jobs:
           if grep -q -- "--enable-gpl" version.txt; then echo "error: GPL build" >&2; exit 1; fi
           ./out/ffmpeg -hide_banner -f lavfi -i sine=d=2 -c:a libmp3lame -b:a 32k -f mp3 -y smoke.mp3
           ./out/ffmpeg -hide_banner -f lavfi -i sine=d=2 -c:a libopus -b:a 24k -f opus -y smoke.opus
+          ./out/ffmpeg -hide_banner -f lavfi -i testsrc2=s=640x360:d=2 -c:v libsvtav1 -crf 40 -preset 10 -y smoke-av1.mp4
+          ./out/ffmpeg -hide_banner -f lavfi -i testsrc2=s=640x360:d=2 -c:v libopenh264 -b:v 1M -y smoke-h264.mp4
           ./out/ffprobe -hide_banner -v error -show_format smoke.mp3
       - name: Compress
         run: |
@@ -101,12 +103,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build tools
         run: |
-          brew install nasm pkgconf zstd
+          brew install nasm pkgconf zstd cmake
           tools/ffmpeg/build-macos.sh "$RUNNER_TEMP/work" out
       - name: Smoke test
         run: |
           ./out/ffmpeg -hide_banner -f lavfi -i sine=d=2 -c:a libmp3lame -b:a 32k -f mp3 -y smoke.mp3
           ./out/ffmpeg -hide_banner -f lavfi -i sine=d=2 -c:a libopus -b:a 24k -f opus -y smoke.opus
+          ./out/ffmpeg -hide_banner -f lavfi -i testsrc2=s=640x360:d=2 -c:v libsvtav1 -crf 40 -preset 10 -y smoke-av1.mp4
           ./out/ffprobe -hide_banner -v error -show_format smoke.mp3
           lipo -archs out/ffmpeg
       - name: Compress
@@ -164,7 +167,7 @@ jobs:
 
           Sources:
           - Windows and Linux: BtbN FFmpeg-Builds, LGPL variant, 9.0 branch, release $BTBN_RELEASE (build scripts: https://github.com/BtbN/FFmpeg-Builds). FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/n9.0.2
-          - macOS: built by tools/ffmpeg/build-macos.sh at commit $GITHUB_SHA from https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz, LAME 3.100 (LGPL), and Opus 1.5.2 (BSD).
+          - macOS: built by tools/ffmpeg/build-macos.sh at commit $GITHUB_SHA from https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz, LAME 3.100 (LGPL), Opus 1.5.2 (BSD), and SVT-AV1 4.2.0 (BSD); H.264 and HEVC use the system's VideoToolbox.
           NOTES
           sed -i 's/^          //' notes.md
           gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" \
