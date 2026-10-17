@@ -1,5 +1,9 @@
+import { FolderOpen } from "lucide-react";
+import { Button } from "../components/Button";
 import { Dialog } from "../components/Dialog";
 import { Kbd } from "../components/Controls";
+import { toast } from "../components/toastStore";
+import { errorMessage, openActivityFolder } from "../ipc/commands";
 import { modKeyLabel } from "../lib/platform";
 import { usePlatform } from "./queries";
 import { useUiStore } from "./uiStore";
@@ -53,6 +57,18 @@ export function ShortcutSheet() {
           </div>
         ))}
       </dl>
+      <section className="shortcut-help" aria-labelledby="shortcut-help-title">
+        <h3 id="shortcut-help-title" className="shortcut-help-title">
+          Help
+        </h3>
+        <Button
+          size="sm"
+          icon={<FolderOpen size={14} />}
+          onClick={() => openActivityFolder().catch((e: unknown) => toast.danger(errorMessage(e)))}
+        >
+          Open activity log folder
+        </Button>
+      </section>
     </Dialog>
   );
 }

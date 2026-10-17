@@ -1,6 +1,6 @@
 # Plan: Compress audio and video before upload
 
-Status: **Planned. Not implemented.** Target release: 0.2.0.
+Status: **Planned. Not implemented.** Target release: 0.3.0.
 
 ## Goal
 
@@ -270,10 +270,10 @@ flowchart LR
 | 6 | Video: presets, hardware detection, HDR and rotation handling | MP4 cases pass on all three OSes |
 | 7 | Docs, notices, threat model, release 0.2.0 | README, PLAN, CHANGELOG, THIRD_PARTY_NOTICES updated |
 
-## Open questions
+## Decisions (confirmed 2026-10-17)
 
-1. **Speech default**: 32 kbps MP3 (50% smaller on the samples) or 48 kbps (25% smaller, a little clearer)? Listening samples were provided.
-2. **WAV default**: MP3 (smallest, lossy) or FLAC (lossless, about half size)?
-3. **FFmpeg delivery**: download on first use (recommended) or bundle in the installer?
-4. **Video default**: cap at 1080p, or keep resolution?
-5. **Smallest mode**: offer Opus and AV1 at all, given they change file extensions and older players may not support them?
+1. **Speech default**: MP3 32 kbps.
+2. **WAV and other lossless audio**: MP3.
+3. **FFmpeg delivery**: download on first use, pinned and SHA-256 verified, hosted on this repository's releases.
+4. **Video default**: Balanced, capped at 1080p.
+5. **Smallest mode**: offered as an opt-in mode (Opus and AV1, extensions change).

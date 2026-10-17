@@ -49,3 +49,25 @@ pub async fn pick_folder(
     let picked = rx.await.map_err(|_| closed())?;
     Ok(picked.and_then(|p| p.into_path().ok()))
 }
+
+/// Ask where to save a CSV file. Returns the chosen path with a `.csv`
+/// extension.
+pub async fn save_csv(app: &AppHandle, file_name: &str) -> Result<Option<PathBuf>, AppError> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Export activity")
+        .set_file_name(file_name)
+        .add_filter("CSV", &["csv"])
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+    let picked = rx.await.map_err(|_| closed())?;
+    Ok(picked.and_then(|p| p.into_path().ok()).map(|mut p| {
+        let is_csv = p.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"));
+        if !is_csv {
+            p.as_mut_os_string().push(".csv");
+        }
+        p
+    }))
+}

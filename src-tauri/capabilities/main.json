@@ -55,6 +55,9 @@
     "allow-history-clear",
     "allow-settings-choose-activity-dir",
     "allow-open-activity-folder",
-    "allow-activity-note"
+    "allow-activity-note",
+    "allow-activity-reset-dir",
+    "allow-log-copy-path",
+    "allow-activity-export-csv"
   ]
 }

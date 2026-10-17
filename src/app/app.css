@@ -108,6 +108,21 @@
   gap: var(--sp-1) var(--sp-8);
 }
 
+.shortcut-help {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-3);
+  border-top: var(--border-w) solid var(--border-subtle);
+}
+
+.shortcut-help-title {
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
 .shortcut-row {
   display: flex;
   align-items: center;

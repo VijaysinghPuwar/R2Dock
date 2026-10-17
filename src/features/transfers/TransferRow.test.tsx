@@ -6,12 +6,14 @@ import { makeJob } from "./testJobs";
 
 const transferControl = vi.fn((_id: string, _action: unknown) => Promise.resolve());
 const transferShow = vi.fn((_id: string) => Promise.resolve());
+const openActivityFolder = vi.fn(() => Promise.resolve());
 
 vi.mock("../../ipc/commands", async (orig) => ({
   ...(await orig<typeof import("../../ipc/commands")>()),
   transferControl: (id: string, action: unknown) => transferControl(id, action),
   transferControlMany: vi.fn(() => Promise.resolve()),
   transferShow: (id: string) => transferShow(id),
+  openActivityFolder: () => openActivityFolder(),
 }));
 
 const { TransferRow } = await import("./TransferRow");
@@ -56,6 +58,22 @@ describe("TransferRow", () => {
     expect(transferControl).toHaveBeenCalledWith("f", { action: "retry" });
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  });
+
+  it("links failed job details to the activity log", async () => {
+    renderWithProviders(
+      <TransferRow
+        job={makeJob({
+          state: "failed",
+          error: { code: "accessDenied", message: "This key cannot do that.", detail: "request id r1", retryable: false },
+        })}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Open activity log" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(screen.getByText(/request id r1/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open activity log" }));
+    expect(openActivityFolder).toHaveBeenCalledTimes(1);
   });
 
   it("resolves conflicts with the chosen policy", async () => {

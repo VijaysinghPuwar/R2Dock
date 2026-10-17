@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-log-copy-path"
+description = "Enables the log_copy_path command without any pre-configured scope."
+commands.allow = ["log_copy_path"]
+
+[[permission]]
+identifier = "deny-log-copy-path"
+description = "Denies the log_copy_path command without any pre-configured scope."
+commands.deny = ["log_copy_path"]

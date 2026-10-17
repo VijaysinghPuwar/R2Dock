@@ -17,6 +17,10 @@ const SENSITIVE_MARKERS: [&str; 9] = [
 
 const REDACTED: &str = "[REDACTED]";
 
+/// R2 endpoint hosts start with the account id (`<account>.r2.cloudflarestorage.com`).
+const R2_HOST: &str = "r2.cloudflarestorage.com";
+const ACCOUNT: &str = "[ACCOUNT]";
+
 fn is_value_end(c: char) -> bool {
     c.is_whitespace() || matches!(c, '&' | ',' | ';' | '"' | '\'' | ')' | ']' | '}' | '>')
 }
@@ -30,6 +34,31 @@ pub fn redact_text(input: &str) -> String {
     for line in input.split_inclusive('\n') {
         out.push_str(&redact_line(line));
     }
+    redact_account_hosts(&out)
+}
+
+/// Replace everything before `r2.cloudflarestorage.com` in a host name
+/// (account id, jurisdiction, bucket) with `[ACCOUNT].`.
+fn redact_account_hosts(input: &str) -> String {
+    let lower = input.to_ascii_lowercase();
+    let mut out = String::with_capacity(input.len());
+    let mut idx = 0;
+    while let Some(p) = lower[idx..].find(R2_HOST) {
+        let pos = idx + p;
+        let host_start = lower[..pos]
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+            .map_or(0, |i| i + 1);
+        if host_start < pos && host_start >= idx {
+            out.push_str(&input[idx..host_start]);
+            out.push_str(ACCOUNT);
+            out.push('.');
+        } else {
+            out.push_str(&input[idx..pos]);
+        }
+        out.push_str(&input[pos..pos + R2_HOST.len()]);
+        idx = pos + R2_HOST.len();
+    }
+    out.push_str(&input[idx..]);
     out
 }
 
@@ -117,6 +146,24 @@ mod tests {
         assert!(out.contains("other=keep"));
         let json = redact_text("{\"secret\":\"topsecretvalue\"}");
         assert!(!json.contains("topsecretvalue"));
+    }
+
+    #[test]
+    fn redacts_account_id_in_endpoints() {
+        let account = "0123456789abcdef0123456789abcdef";
+        for text in [
+            format!("https://{account}.r2.cloudflarestorage.com/media-library"),
+            format!("dns error for {account}.eu.r2.cloudflarestorage.com:443"),
+            format!("{}.R2.CLOUDFLARESTORAGE.COM", account.to_uppercase()),
+        ] {
+            let out = redact_text(&text);
+            assert!(!out.to_lowercase().contains(account), "{out}");
+            assert!(out.contains("[ACCOUNT]."), "{out}");
+        }
+        assert_eq!(
+            redact_text("see r2.cloudflarestorage.com docs"),
+            "see r2.cloudflarestorage.com docs"
+        );
     }
 
     #[test]

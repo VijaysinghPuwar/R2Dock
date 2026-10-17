@@ -920,6 +920,13 @@ textarea.input {
 .inline-result-info .inline-result-icon {
   color: var(--info);
 }
+.open-activity-log {
+  display: block;
+  align-self: flex-start;
+  margin-top: var(--sp-1);
+  text-align: left;
+}
+
 .tech-detail {
   margin: 0;
   padding: var(--sp-2);

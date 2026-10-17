@@ -88,8 +88,5 @@ fn open_external_inner(app: &tauri::AppHandle, url: String) -> CmdResult<()> {
 
 #[tauri::command]
 pub fn open_log_folder(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
-    let _ = std::fs::create_dir_all(&state.paths.logs);
-    app.opener()
-        .open_path(state.paths.logs.to_string_lossy(), None::<&str>)
-        .map_err(|_| AppError::internal("Could not open the log folder."))
+    super::settings::open_dir(&app, &state.paths.logs)
 }

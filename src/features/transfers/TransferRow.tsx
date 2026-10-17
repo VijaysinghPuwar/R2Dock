@@ -4,6 +4,7 @@ import { transferShow } from "../../ipc/commands";
 import type { JobSnapshot } from "../../ipc/bindings/JobSnapshot";
 import type { GroupInfo } from "../../ipc/bindings/GroupInfo";
 import { Button, IconButton } from "../../components/Button";
+import { OpenActivityLogButton } from "../../components/Feedback";
 import { ProgressBar, type ProgressTone } from "../../components/ProgressBar";
 import { useNavStore } from "../../app/navStore";
 import {
@@ -234,9 +235,12 @@ export function TransferRow({ job, compact = false, child = false }: TransferRow
           <JobActions job={job} compact={compact} />
         </div>
         {showDetails && job.error && (
-          <pre className="xfer-detail mono selectable">
-            {joinDot([job.error.code, job.error.detail])}
-          </pre>
+          <>
+            <pre className="xfer-detail mono selectable">
+              {joinDot([job.error.code, job.error.detail])}
+            </pre>
+            <OpenActivityLogButton />
+          </>
         )}
       </div>
     </div>

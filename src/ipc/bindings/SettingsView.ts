@@ -5,4 +5,12 @@ export type SettingsView = { preferences: Preferences, downloadDir: string,
 /**
  * Activity log folder, with the home folder shown as `~`.
  */
-activityDir: string, credentialStore: string, credentialStoreAvailable: boolean, };
+activityDir: string, 
+/**
+ * Whether the activity folder is the default one.
+ */
+activityDirIsDefault: boolean, 
+/**
+ * Technical (diagnostic) log folder, with the home folder shown as `~`.
+ */
+logDir: string, credentialStore: string, credentialStoreAvailable: boolean, };

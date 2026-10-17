@@ -1,7 +1,7 @@
 # R2Dock Technical Plan
 
 Version: 0.1
-Status: Version 0.1.0 implements Phases 1 to 5 (see section 17.1 for what is done and what remains). Items still marked **[Verify]** have not been checked against a real R2 bucket.
+Status: Version 0.2.0 implements Phases 1 to 5 plus the CSV activity log (see section 17.1 for what is done and what remains). Items still marked **[Verify]** have not been checked against a real R2 bucket.
 
 > The product name is R2Dock (decided 2026-10-17). The name should still live in one place in code (app config and a constants module).
 
@@ -595,7 +595,7 @@ Downloads:
 - Local paths logged with the home directory replaced by `~`; object keys logged only at debug level.
 - Logs rotate (5 files, 5 MB each) in the platform log directory.
 - A test asserts that a known fake secret never appears in captured logs or error DTOs.
-- **Activity log** (separate from the diagnostic log): one JSON line per user action and result in `activity-YYYY-MM-DD.jsonl`, in `<logs>/activity` or a folder chosen with the folder picker. It records action names, counts, durations, error codes, messages, and R2 request IDs. It never records secrets, command arguments, clipboard text, or link paths. Bucket names, keys, and file names are written as short stable hashes unless the user enables names. Lines pass through the same redaction filter and are written on a background thread. Files older than the retention setting (default 14 days) are deleted at startup.
+- **Activity log** (separate from the diagnostic log): one CSV row per user action and result in `activity-YYYY-MM-DD.csv` (UTC date), in `<logs>/activity` or a folder chosen with the folder picker. Columns are fixed (see the README); each file starts with a UTF-8 byte order mark and a header row. It records action names, counts, durations, error codes, messages, and R2 request IDs. It never records secrets, command arguments, clipboard text, or link paths. Bucket names, keys, and file names are written as short stable hashes unless the user enables names. Every cell passes through the same redaction filter (which also hides the account id in R2 endpoint hosts), cells that a spreadsheet would read as a formula get a leading `'`, and line breaks become spaces so each record is one line. Rows are written on a background thread. Files older than the retention setting (default 14 days) are deleted at startup. Settings > Advanced > Logs shows both log folders with Open folder and Copy path (the full path is copied by Rust and never passes through the webview), and exports a date range to one CSV file through the Rust save dialog. Version 0.1.x `.jsonl` files are still trimmed and included in exports.
 
 ### 9.8 Threat model
 
@@ -611,6 +611,7 @@ Downloads:
 | Local files | Following symlinks during upload to exfiltrate | `follow_links(false)`, skip and report | Low |
 | Remote data | Accidental destructive operations | Confirmations, typed confirmation, counts shown, no hidden bulk actions | User error remains possible; R2 has no trash |
 | Updates | Malicious update | Tauri updater signature verification, HTTPS, signing keys offline | Compromise of signing key |
+| Activity log | Crafted object or file name runs a formula when the CSV is opened in a spreadsheet | Formula prefixes (`=`, `+`, `-`, `@`, tab, carriage return) neutralized with `'`; RFC 4180 quoting; names hashed by default | Low |
 | Supply chain | Malicious dependency | Lockfiles, `cargo deny`, `cargo audit`, `npm audit`, minimal deps, Dependabot review | Not eliminated |
 
 Out of scope: a fully compromised OS or user account, physical attackers with an unlocked session, and Cloudflare-side compromise.
@@ -848,7 +849,7 @@ r2dock/
 
 MVP = Phases 0 to 7 with items marked M. "Should have" items may slip to v1.1 without blocking release.
 
-### 17.1 Implementation status (0.1.0)
+### 17.1 Implementation status (0.2.0)
 
 | Phase | Status |
 |---|---|
@@ -858,6 +859,7 @@ MVP = Phases 0 to 7 with items marked M. "Should have" items may slip to v1.1 wi
 | 3 Browser | Done: buckets, prefix navigation, pagination, virtualization, sorting, list/grid, details, prefix search, empty and error states. |
 | 4 Transfers | Done: single and multipart upload, resumable downloads, drag and drop, conflict policies, pause/resume/cancel/retry, history, restart journal. |
 | 5 Management | Done: new folder, delete with tokens and typed confirmation, rename and move with partial failure reports, copy key, public URL, image/text/audio previews, favorites, size calculation. |
+| 0.2.0 Logs | Done: CSV activity log, Settings > Advanced > Logs (locations, Open folder, Copy path, Change, Reset to default, export by date range), Help menu entry on macOS and in the shortcut sheet, "Open activity log" in error details. See [docs/plans/logs-and-csv.md](docs/plans/logs-and-csv.md). |
 | 6 Hardening | Not started: benchmarks, accessibility audit, usability tests, soak tests. |
 | 7 Packaging | Partly done: unsigned installers built by CI. Code signing, notarization, and the updater are not done. |
 
@@ -1021,9 +1023,8 @@ No test results are claimed in this plan. None have been run.
 
 ## 21. Future Enhancements
 
-- **Next (0.2.0), in this order:**
-  1. Log folder access in Settings and a CSV activity log: [docs/plans/logs-and-csv.md](docs/plans/logs-and-csv.md).
-  2. Optional audio and video compression before upload: [docs/plans/media-compression.md](docs/plans/media-compression.md).
+- **Done in 0.2.0:** log folder access in Settings and a CSV activity log: [docs/plans/logs-and-csv.md](docs/plans/logs-and-csv.md).
+- **Next (0.3.0):** optional audio and video compression before upload: [docs/plans/media-compression.md](docs/plans/media-compression.md).
 
 - Presigned share links with expiry picker and warnings (v1.1).
 - Video and PDF previews.

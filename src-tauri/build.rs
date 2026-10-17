@@ -47,6 +47,9 @@ const COMMANDS: &[&str] = &[
     "settings_choose_activity_dir",
     "open_activity_folder",
     "activity_note",
+    "activity_reset_dir",
+    "log_copy_path",
+    "activity_export_csv",
 ];
 
 fn main() {

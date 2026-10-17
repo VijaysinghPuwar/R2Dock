@@ -1,6 +1,16 @@
 # Plan: Log folder access and CSV activity log
 
-Status: **Planned. Not implemented.** Target release: 0.2.0 (before media compression, so compression events land in the CSV from day one).
+Status: **Implemented in 0.2.0.** The sections below describe what shipped; "Changes from the original plan" lists where the implementation differs.
+
+## Changes from the original plan
+
+- `log_locations` was folded into `settings_get`: `SettingsView` now carries `logDir` and `activityDirIsDefault` next to `activityDir`, so Settings needs no extra call.
+- Copy path uses a new `log_copy_path` command instead of `clipboard_write`. Rust copies the full path (Windows Explorer cannot open a `~` path) and the full path never passes through the webview.
+- Redaction runs per cell, not on the whole line, so a redacted value can never break the column layout. The filter now also hides the account id in R2 endpoint hosts.
+- Time stamps have millisecond precision (`2026-10-18T09:14:03.120Z`) so rows sort by time as plain text.
+- Each file starts with a UTF-8 byte order mark, so Excel shows non-English names correctly.
+- Export processes one day at a time, so memory is bounded by one day's rows, not the whole range. Saving over a daily activity file is refused.
+- The Help menu entry exists on macOS (Help > Open Activity Log Folder). Windows and Linux have no menu bar, so the entry is at the bottom of the keyboard shortcut sheet (press `?`) on every platform.
 
 ## Goal
 
@@ -22,7 +32,7 @@ Anyone can find, open, and read R2Dock's logs without technical knowledge: the f
 
 | Column | Example |
 |---|---|
-| time (UTC, ISO 8601) | 2026-10-18T09:14:03Z |
+| time (UTC, ISO 8601) | 2026-10-18T09:14:03.120Z |
 | local_time | 2026-10-18 05:14:03 |
 | session | 3f2a9c1e |
 | action | upload_start |
@@ -60,7 +70,7 @@ Default locations (shown in Settings and the README):
 | Windows | `%LOCALAPPDATA%\app.r2dock.desktop\logs\activity\` | `%LOCALAPPDATA%\app.r2dock.desktop\logs\` |
 | Linux | `~/.local/share/app.r2dock.desktop/logs/activity/` | `~/.local/share/app.r2dock.desktop/logs/` |
 
-The exact paths are confirmed per OS during implementation (Tauri's `app_log_dir`) and the table is updated.
+The paths were confirmed against Tauri's `app_log_dir` (2.12): `~/Library/Logs/<identifier>` on macOS, `<local data dir>/<identifier>/logs` on Windows and Linux.
 
 ### 3. Quick access outside Settings
 
@@ -73,10 +83,10 @@ The exact paths are confirmed per OS during implementation (Tauri's `app_log_dir
 |---|---|
 | `open_activity_folder` (exists) | Opens the folder in Finder, Explorer, or the file manager |
 | `open_log_folder` (exists) | Opens the technical log folder |
-| `log_locations` (new) | Returns both display paths (home as `~`) for Settings |
+| `settings_get` (extended) | Returns both display paths (home as `~`) for Settings |
 | `activity_export_csv` (new) | Takes a date range, asks for a destination with the Rust save dialog, merges daily CSV and old JSONL files into one CSV. The webview never supplies a path |
 | `activity_reset_dir` (new) | Returns to the default folder |
-| Copy path | Uses the existing `clipboard_write` |
+| `log_copy_path` (new) | Copies the full path of either folder to the clipboard from Rust |
 
 All new commands are added to `build.rs`, the capability file, and `src/ipc/commands.ts`.
 

@@ -1,6 +1,7 @@
-//! Activity log: one JSON line per user action and its result, for
-//! troubleshooting. Files are `activity-YYYY-MM-DD.jsonl` in a folder the
-//! user can change in Settings.
+//! Activity log: one CSV row per user action and its result, for
+//! troubleshooting. Files are `activity-YYYY-MM-DD.csv` (UTC date) in a
+//! folder the user can change in Settings. Version 0.1.x wrote
+//! `activity-YYYY-MM-DD.jsonl`; those files are still trimmed and exported.
 //!
 //! Privacy rules:
 //! - Never records secrets, request arguments, signatures, or clipboard text.
@@ -8,8 +9,11 @@
 //!   hash (`#1a2b3c4d`) unless the user turns on "Include file and folder
 //!   names". The same name always gives the same hash, so events can still be
 //!   matched up.
-//! - Every line also passes through the redaction filter.
+//! - Every cell also passes through the redaction filter (see [`csv`]).
 //! - Writes happen on a background thread, so commands never wait on disk.
+
+pub mod csv;
+pub mod export;
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -22,32 +26,34 @@ use std::time::{Duration, Instant, SystemTime};
 use chrono::Utc;
 use parking_lot::RwLock;
 use r2dock_core::AppError;
-use r2dock_core::redact::redact_text;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
-/// Longest text kept for any single field.
-const MAX_FIELD: usize = 500;
+use self::csv::{Record, RecordError};
+
+/// File name prefix shared by CSV and old JSONL activity files.
+pub const FILE_PREFIX: &str = "activity-";
 
 pub struct ActivityLog {
     dir: Arc<RwLock<PathBuf>>,
     enabled: AtomicBool,
     names: AtomicBool,
     session: String,
-    tx: Option<Sender<String>>,
+    /// Sends `(UTC date, CSV line)` to the writer thread.
+    tx: Option<Sender<(String, String)>>,
 }
 
 impl ActivityLog {
     /// Start the log and its writer thread.
     pub fn start(dir: PathBuf, enabled: bool, names: bool) -> Arc<Self> {
         let dir = Arc::new(RwLock::new(dir));
-        let (tx, rx) = channel::<String>();
+        let (tx, rx) = channel::<(String, String)>();
         let writer_dir = dir.clone();
         let spawned = std::thread::Builder::new()
             .name("r2dock-activity".into())
             .spawn(move || {
-                while let Ok(line) = rx.recv() {
+                while let Ok((date, line)) = rx.recv() {
                     let dir = writer_dir.read().clone();
-                    write_line(&dir, &line);
+                    write_line(&dir, &date, &line);
                 }
             })
             .is_ok();
@@ -74,7 +80,7 @@ impl ActivityLog {
     /// names, otherwise a stable short hash.
     pub fn name(&self, value: &str) -> String {
         if self.names.load(Ordering::Relaxed) {
-            truncate(&r2dock_core::keys::display_name(value))
+            r2dock_core::keys::display_name(value)
         } else if value.is_empty() {
             String::new()
         } else {
@@ -110,34 +116,25 @@ impl ActivityLog {
             return;
         }
         let Some(tx) = &self.tx else { return };
-        let mut line = json!({
-            "time": Utc::now().to_rfc3339(),
-            "session": self.session,
-            "action": action,
-            "outcome": outcome,
-        });
-        if let Some(obj) = line.as_object_mut() {
-            if let Some(d) = duration {
-                obj.insert(
-                    "ms".into(),
-                    json!(u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
-                );
-            }
-            if !fields.is_empty() {
-                obj.insert("details".into(), Value::Object(fields));
-            }
-            if let Some(e) = error {
-                obj.insert(
-                    "error".into(),
-                    json!({
-                        "code": e.code,
-                        "message": truncate(&e.message),
-                        "detail": e.detail.as_deref().map(truncate),
-                    }),
-                );
-            }
-        }
-        let _ = tx.send(redact_text(&line.to_string()));
+        let now = Utc::now();
+        let record = Record {
+            time: now,
+            session: self.session.clone(),
+            action: action.to_string(),
+            outcome: outcome.to_string(),
+            duration_ms: duration.map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+            fields,
+            error: error.map(|e| RecordError {
+                code: serde_json::to_value(e.code)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_default(),
+                message: e.message.clone(),
+                detail: e.detail.clone(),
+            }),
+        };
+        let date = now.format("%Y-%m-%d").to_string();
+        let _ = tx.send((date, record.to_line()));
     }
 
     /// Delete activity files older than `days`. Blocking.
@@ -149,7 +146,7 @@ impl ActivityLog {
         let cutoff = SystemTime::now() - Duration::from_secs(u64::from(days) * 86_400);
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !(name.starts_with("activity-") && name.ends_with(".jsonl")) {
+            if export::file_date(&name).is_none() {
                 continue;
             }
             let old = entry
@@ -163,23 +160,17 @@ impl ActivityLog {
     }
 }
 
-fn truncate(s: &str) -> String {
-    if s.len() <= MAX_FIELD {
-        return s.to_string();
-    }
-    let mut end = MAX_FIELD;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &s[..end])
-}
-
-fn write_line(dir: &Path, line: &str) {
+fn write_line(dir: &Path, date: &str, line: &str) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
-    let file = dir.join(format!("activity-{}.jsonl", Utc::now().format("%Y-%m-%d")));
+    let file = dir.join(format!("{FILE_PREFIX}{date}.csv"));
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(file) {
+        // A new (or emptied) file starts with the byte order mark and header.
+        let fresh = f.metadata().is_ok_and(|m| m.len() == 0);
+        if fresh {
+            let _ = writeln!(f, "{}{}", csv::BOM, csv::header_line());
+        }
         let _ = writeln!(f, "{line}");
     }
 }
@@ -277,16 +268,33 @@ mod tests {
         )
         .with_detail("AccessDenied (403), request id abc");
         log.start_action("delete_execute").end::<()>(&Err(err));
-        let text = wait_for_lines(&dir.path().join("activity"), 2);
-        assert!(text.contains("\"action\":\"object_list\""));
-        assert!(text.contains("\"outcome\":\"error\""));
-        assert!(text.contains("request id abc"));
+        // Header plus two rows.
+        let text = wait_for_lines(&dir.path().join("activity"), 3);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], format!("{}{}", csv::BOM, csv::header_line()));
+        assert_eq!(lines.len(), 3, "header is written once: {text}");
+        assert!(lines[1].contains(",object_list,ok,"));
+        assert!(lines[1].contains(",#"), "hashed bucket column");
+        assert!(lines[1].contains("objects=3"));
+        assert!(lines[2].contains(",delete_execute,error,"));
+        assert!(lines[2].contains(",accessDenied,This key cannot do that.,abc,"));
         assert!(
             !text.contains("media-library"),
             "names must be hashed by default"
         );
         assert!(!text.contains("Audiobook G"));
-        assert!(text.contains("\"bucket\":\"#"));
+        let file = std::fs::read_dir(dir.path().join("activity"))
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            file.starts_with("activity-") && file.ends_with(".csv"),
+            "{file}"
+        );
     }
 
     #[test]
@@ -296,9 +304,10 @@ mod tests {
         log.start_action("object_head")
             .name("key", "covers/cover.webp")
             .field("note", "secret=FAKESECRETVALUE123")
+            .name("bucket", "media-library")
             .end::<()>(&Ok(()));
-        let text = wait_for_lines(dir.path(), 1);
-        assert!(text.contains("covers/cover.webp"));
+        let text = wait_for_lines(dir.path(), 2);
+        assert!(text.contains(",media-library,covers/cover.webp,"));
         assert!(!text.contains("FAKESECRETVALUE123"));
     }
 

@@ -12,9 +12,11 @@ import type { ConnectionSummary } from "./bindings/ConnectionSummary";
 import type { DeletePreview } from "./bindings/DeletePreview";
 import type { DeleteResult } from "./bindings/DeleteResult";
 import type { DownloadStarted } from "./bindings/DownloadStarted";
+import type { ExportRange } from "./bindings/ExportRange";
 import type { HistoryEntry } from "./bindings/HistoryEntry";
 import type { JobAction } from "./bindings/JobAction";
 import type { ListPage } from "./bindings/ListPage";
+import type { LogKind } from "./bindings/LogKind";
 import type { MovePreview } from "./bindings/MovePreview";
 import type { MoveResult } from "./bindings/MoveResult";
 import type { ObjectInfo } from "./bindings/ObjectInfo";
@@ -139,6 +141,11 @@ export const historyClear = () => invoke<void>("history_clear");
 export const openLogFolder = () => invoke<void>("open_log_folder");
 export const settingsChooseActivityDir = () => invoke<SettingsView>("settings_choose_activity_dir");
 export const openActivityFolder = () => invoke<void>("open_activity_folder");
+export const activityResetDir = () => invoke<SettingsView>("activity_reset_dir");
+/** Copies the full folder path; Rust writes it to the clipboard. */
+export const logCopyPath = (kind: LogKind) => invoke<void>("log_copy_path", { kind });
+/** Asks for a destination with the system save dialog. Returns the row count, or null if cancelled. */
+export const activityExportCsv = (range: ExportRange) => invoke<number | null>("activity_export_csv", { range });
 /** Record a problem seen by the interface in the activity log (best effort, never throws). */
 export const activityNote = (kind: string, message: string) =>
   invoke<void>("activity_note", { kind, message }).catch(() => undefined);

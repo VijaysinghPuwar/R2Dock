@@ -1,6 +1,6 @@
 import { CircleAlert, CircleCheck, Info, TriangleAlert, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { clipboardWrite, errorMessage } from "../ipc/commands";
+import { clipboardWrite, errorMessage, openActivityFolder } from "../ipc/commands";
 import { Check, Copy } from "lucide-react";
 import { Button, IconButton } from "./Button";
 import { toast } from "./toastStore";
@@ -78,11 +78,28 @@ export function InlineResult({
             <button type="button" className="link-button small" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
               {open ? "Hide technical details" : "Show technical details"}
             </button>
-            {open && <pre className="tech-detail mono selectable">{detail}</pre>}
+            {open && (
+              <>
+                <pre className="tech-detail mono selectable">{detail}</pre>
+                <OpenActivityLogButton />
+              </>
+            )}
           </>
         )}
       </div>
     </div>
+  );
+}
+
+/** Opens the activity log folder, so the user can find the row for an error. */
+export function OpenActivityLogButton() {
+  const open = () => {
+    openActivityFolder().catch((e: unknown) => toast.danger(errorMessage(e)));
+  };
+  return (
+    <button type="button" className="link-button small open-activity-log" onClick={open}>
+      Open activity log
+    </button>
   );
 }
 

@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ExternalLink, FolderOpen, RotateCcw, Trash2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { ChevronRight, ExternalLink, RotateCcw, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { applyAppearance } from "../../app/appearance";
 import { qk, useAppInfoValue, usePreferences, useSettings, useUpdatePreferences } from "../../app/queries";
 import { Button } from "../../components/Button";
@@ -14,45 +14,20 @@ import {
   errorMessage,
   historyClear,
   openExternal,
-  openActivityFolder,
-  openLogFolder,
-  settingsChooseActivityDir,
   settingsChooseDownloadDir,
   settingsReset,
 } from "../../ipc/commands";
 import type { ConflictPolicy } from "../../ipc/bindings/ConflictPolicy";
 import type { Density } from "../../ipc/bindings/Density";
-import type { LogLevel } from "../../ipc/bindings/LogLevel";
 import type { TextSize } from "../../ipc/bindings/TextSize";
 import type { Theme } from "../../ipc/bindings/Theme";
 import type { ViewMode } from "../../ipc/bindings/ViewMode";
+import { LogsSection } from "./LogsSection";
 import { NumberSetting } from "./NumberSetting";
+import { ControlRow, Section } from "./SettingsLayout";
 
 export const SOURCE_URL = "https://github.com/VijaysinghPuwar/R2Dock";
 export const LICENSE_URL = "https://github.com/VijaysinghPuwar/R2Dock/blob/main/LICENSE";
-
-function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
-  return (
-    <section className="settings-section" aria-labelledby={`settings-${id}`}>
-      <h2 id={`settings-${id}`} className="settings-heading">
-        {title}
-      </h2>
-      <div className="settings-group">{children}</div>
-    </section>
-  );
-}
-
-function ControlRow({ label, helper, children }: { label: string; helper?: string; children: ReactNode }) {
-  return (
-    <div className="setting-row">
-      <div className="setting-text">
-        <span>{label}</span>
-        {helper && <span className="small muted">{helper}</span>}
-      </div>
-      <div className="setting-control">{children}</div>
-    </div>
-  );
-}
 
 export function AppearanceSection() {
   const prefs = usePreferences();
@@ -305,8 +280,6 @@ export function NotificationsSection() {
 
 export function AdvancedSection() {
   const client = useQueryClient();
-  const prefs = usePreferences();
-  const update = useUpdatePreferences();
   const [resetOpen, setResetOpen] = useState(false);
 
   const reset = async () => {
@@ -321,76 +294,10 @@ export function AdvancedSection() {
     }
   };
 
-  const openLogs = () => {
-    openLogFolder().catch((e: unknown) => toast.danger(errorMessage(e)));
-  };
-  const openActivity = () => {
-    openActivityFolder().catch((e: unknown) => toast.danger(errorMessage(e)));
-  };
-  const settings = useSettings();
-  const [choosingActivity, setChoosingActivity] = useState(false);
-  const chooseActivityDir = async () => {
-    setChoosingActivity(true);
-    try {
-      const view = await settingsChooseActivityDir();
-      client.setQueryData(qk.settings, view);
-    } catch (e) {
-      toast.danger(errorMessage(e));
-    } finally {
-      setChoosingActivity(false);
-    }
-  };
-
   return (
-    <Section id="advanced" title="Advanced">
-      <Switch
-        label="Activity log"
-        description="Records each action and its result (with error codes) to help find problems. Never records keys or secrets."
-        checked={prefs.activityLog}
-        onChange={(activityLog) => update({ activityLog })}
-      />
-      <Switch
-        label="Include file and folder names in the activity log"
-        description="Off: names are replaced with short codes. Turn on only while tracking down a problem."
-        checked={prefs.activityIncludeNames}
-        disabled={!prefs.activityLog}
-        onChange={(activityIncludeNames) => update({ activityIncludeNames })}
-      />
-      <ControlRow label="Activity log folder">
-        <span className="mono truncate download-dir" title={settings.data?.activityDir}>
-          {settings.data?.activityDir ?? "--"}
-        </span>
-        <Button size="sm" loading={choosingActivity} onClick={() => void chooseActivityDir()}>
-          Change
-        </Button>
-        <Button size="sm" icon={<FolderOpen size={14} />} onClick={openActivity}>
-          Open
-        </Button>
-      </ControlRow>
-      <NumberSetting
-        label="Keep activity logs for"
-        unit="days"
-        min={1}
-        max={365}
-        value={prefs.activityDays}
-        onCommit={(activityDays) => update({ activityDays })}
-      />
-      <ControlRow label="Log level" helper="Logs never contain your secret keys.">
-        <SegmentedControl<LogLevel>
-          label="Log level"
-          value={prefs.logLevel}
-          onChange={(logLevel) => update({ logLevel })}
-          options={[
-            { value: "standard", label: "Standard" },
-            { value: "detailed", label: "Detailed" },
-          ]}
-        />
-      </ControlRow>
-      <ControlRow label="Log files">
-        <Button size="sm" icon={<FolderOpen size={14} />} onClick={openLogs}>
-          Open log folder
-        </Button>
-      </ControlRow>
+    <div className="settings-stack">
+      <LogsSection />
+      <Section id="advanced" title="Advanced">
       <ControlRow label="Reset">
         <Button size="sm" icon={<RotateCcw size={14} />} onClick={() => setResetOpen(true)}>
           Reset all settings
@@ -405,7 +312,8 @@ export function AdvancedSection() {
         danger
         onConfirm={reset}
       />
-    </Section>
+      </Section>
+    </div>
   );
 }
 

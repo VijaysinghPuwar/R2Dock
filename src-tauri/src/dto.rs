@@ -226,8 +226,32 @@ pub struct SettingsView {
     pub download_dir: String,
     /// Activity log folder, with the home folder shown as `~`.
     pub activity_dir: String,
+    /// Whether the activity folder is the default one.
+    pub activity_dir_is_default: bool,
+    /// Technical (diagnostic) log folder, with the home folder shown as `~`.
+    pub log_dir: String,
     pub credential_store: String,
     pub credential_store_available: bool,
+}
+
+/// Which rows to include in an activity export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ExportRange {
+    Today,
+    Last7Days,
+    Last30Days,
+    All,
+}
+
+/// Which log folder a command acts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum LogKind {
+    Activity,
+    Technical,
 }
 
 /// Drag state from the OS, emitted while files are dragged over the window.

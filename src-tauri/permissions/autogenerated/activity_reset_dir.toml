@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-activity-reset-dir"
+description = "Enables the activity_reset_dir command without any pre-configured scope."
+commands.allow = ["activity_reset_dir"]
+
+[[permission]]
+identifier = "deny-activity-reset-dir"
+description = "Denies the activity_reset_dir command without any pre-configured scope."
+commands.deny = ["activity_reset_dir"]

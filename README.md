@@ -14,9 +14,9 @@ Browse, upload, and manage your buckets like a regular drive. Your keys never le
 
 [Download](https://github.com/VijaysinghPuwar/R2Dock/releases) · [How it works](#how-it-works) · [Security](#security) · [Build from source](#build-from-source)
 
-<img src="docs/screenshots/demo.gif" width="900" alt="R2Dock walkthrough: open a bucket, browse folders, view file details, preview an image, and check transfers">
+<img src="docs/screenshots/demo.gif" width="900" alt="R2Dock walkthrough: open a bucket, browse folders, view file details, preview an image, switch to grid view, check transfers and a failed upload, and export the activity log">
 
-<sub>Walkthrough with sample data: browse a bucket, inspect a file, preview it, and watch transfers.</sub>
+<sub>Walkthrough with sample data: browse a bucket, preview a file, watch transfers, and export the activity log.</sub>
 
 </div>
 
@@ -32,7 +32,7 @@ Cloudflare R2 is cheap and fast object storage, but managing it usually means a 
 | **Transfer** | Drag-and-drop uploads, parallel multipart uploads for large files, resumable downloads, pause / resume / retry, continues after a restart |
 | **Manage** | New folder, rename, move, delete with confirmation, copy key or public link |
 | **Secure** | Keys in the OS keychain, strict app sandbox, safe local file handling |
-| **Debug** | Optional activity log of every action and its result, with names hidden by default |
+| **Logs** | Activity log as CSV (opens in Excel, Numbers, Google Sheets), names hidden by default, export by date range |
 | **Comfortable** | Dark and light themes, keyboard shortcuts, accessible controls |
 
 ## Screenshots
@@ -58,6 +58,18 @@ Cloudflare R2 is cheap and fast object storage, but managing it usually means a 
 3. **Connect** in R2Dock. With an *Object Read & Write* token, also type your bucket names (comma separated), because these tokens cannot list buckets.
 
 > Builds are not code signed yet. On Windows choose *More info → Run anyway*; on macOS right-click the app and choose *Open*.
+
+## Where are the logs?
+
+Settings > Advanced > Logs shows both folders with **Open folder** and **Copy path**. On macOS, Help > Open Activity Log Folder works too.
+
+| OS | Activity log (CSV) | Technical log |
+|---|---|---|
+| macOS | `~/Library/Logs/app.r2dock.desktop/activity/` | `~/Library/Logs/app.r2dock.desktop/` |
+| Windows | `%LOCALAPPDATA%\app.r2dock.desktop\logs\activity\` | `%LOCALAPPDATA%\app.r2dock.desktop\logs\` |
+| Linux | `~/.local/share/app.r2dock.desktop/logs/activity/` | `~/.local/share/app.r2dock.desktop/logs/` |
+
+One file per day (`activity-YYYY-MM-DD.csv`, UTC). Columns: `time`, `local_time`, `session`, `action`, `outcome`, `duration_ms`, `connection`, `bucket`, `item`, `files`, `bytes`, `error_code`, `error_message`, `request_id`, `details`. Secrets are never written, and names appear as short codes such as `#1a2b3c4d` unless you turn names on.
 
 ## How it works
 

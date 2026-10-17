@@ -10,6 +10,8 @@ pub mod dragdrop;
 pub mod dto;
 pub mod logging;
 pub mod media;
+#[cfg(target_os = "macos")]
+mod menu;
 pub mod planning;
 pub mod state;
 
@@ -155,54 +157,59 @@ pub fn run() {
             });
         })
         .setup(|app| setup(app))
-        .on_window_event(dragdrop::handle)
-        .invoke_handler(tauri::generate_handler![
-            commands::app::app_info,
-            commands::app::clipboard_write,
-            commands::app::open_external,
-            commands::app::open_log_folder,
-            commands::connections::connection_list,
-            commands::connections::connection_test,
-            commands::connections::connection_save,
-            commands::connections::connection_remove,
-            commands::connections::connection_set_active,
-            commands::connections::connection_add_bucket,
-            commands::connections::connection_remove_bucket,
-            commands::connections::connection_set_public_url,
-            commands::connections::connection_toggle_favorite,
-            commands::browse::bucket_list,
-            commands::browse::object_list,
-            commands::browse::object_search,
-            commands::browse::object_head,
-            commands::browse::prefix_size,
-            commands::browse::folder_create,
-            commands::browse::preview_text,
-            commands::browse::media_token,
-            commands::manage::delete_preview,
-            commands::manage::delete_execute,
-            commands::manage::move_preview,
-            commands::manage::move_execute,
-            commands::transfers::pick_upload_files,
-            commands::transfers::pick_upload_folder,
-            commands::transfers::upload_prepare,
-            commands::transfers::upload_start,
-            commands::transfers::download_start,
-            commands::transfers::transfer_subscribe,
-            commands::transfers::transfer_control,
-            commands::transfers::transfer_control_many,
-            commands::transfers::transfer_pause_all,
-            commands::transfers::transfer_clear_finished,
-            commands::transfers::transfer_history,
-            commands::transfers::transfer_show,
-            commands::settings::settings_get,
-            commands::settings::settings_set,
-            commands::settings::settings_choose_download_dir,
-            commands::settings::settings_reset,
-            commands::settings::history_clear,
-            commands::settings::settings_choose_activity_dir,
-            commands::settings::open_activity_folder,
-            commands::settings::activity_note,
-        ]);
+        .on_window_event(dragdrop::handle);
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(menu::build).on_menu_event(menu::handle);
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        commands::app::app_info,
+        commands::app::clipboard_write,
+        commands::app::open_external,
+        commands::app::open_log_folder,
+        commands::connections::connection_list,
+        commands::connections::connection_test,
+        commands::connections::connection_save,
+        commands::connections::connection_remove,
+        commands::connections::connection_set_active,
+        commands::connections::connection_add_bucket,
+        commands::connections::connection_remove_bucket,
+        commands::connections::connection_set_public_url,
+        commands::connections::connection_toggle_favorite,
+        commands::browse::bucket_list,
+        commands::browse::object_list,
+        commands::browse::object_search,
+        commands::browse::object_head,
+        commands::browse::prefix_size,
+        commands::browse::folder_create,
+        commands::browse::preview_text,
+        commands::browse::media_token,
+        commands::manage::delete_preview,
+        commands::manage::delete_execute,
+        commands::manage::move_preview,
+        commands::manage::move_execute,
+        commands::transfers::pick_upload_files,
+        commands::transfers::pick_upload_folder,
+        commands::transfers::upload_prepare,
+        commands::transfers::upload_start,
+        commands::transfers::download_start,
+        commands::transfers::transfer_subscribe,
+        commands::transfers::transfer_control,
+        commands::transfers::transfer_control_many,
+        commands::transfers::transfer_pause_all,
+        commands::transfers::transfer_clear_finished,
+        commands::transfers::transfer_history,
+        commands::transfers::transfer_show,
+        commands::settings::settings_get,
+        commands::settings::settings_set,
+        commands::settings::settings_choose_download_dir,
+        commands::settings::settings_reset,
+        commands::settings::history_clear,
+        commands::settings::settings_choose_activity_dir,
+        commands::settings::open_activity_folder,
+        commands::settings::activity_note,
+        commands::settings::activity_reset_dir,
+        commands::settings::log_copy_path,
+        commands::settings::activity_export_csv,
+    ]);
 
     let app = match builder.build(tauri::generate_context!()) {
         Ok(app) => app,
