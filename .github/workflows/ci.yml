@@ -30,7 +30,22 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libxdo-dev libdbus-1-dev build-essential
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libxdo-dev libdbus-1-dev build-essential ffmpeg
+
+      # FFmpeg for the media integration tests (crates/r2dock-media/tests).
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install ffmpeg -y --no-progress
+          # Use the real binary, not the Chocolatey shim, so cancel and
+          # Job Object tests act on FFmpeg itself.
+          $bin = Get-ChildItem C:\ProgramData\chocolatey\lib\ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          "R2DOCK_TEST_FFMPEG=$($bin.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Install NASM (Windows)
         if: runner.os == 'Windows'

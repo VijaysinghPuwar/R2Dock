@@ -67,7 +67,7 @@ jobs:
           releaseBody: |
             Unsigned preview build. See the README for install notes on each platform.
           releaseDraft: false
-          prerelease: true
+          prerelease: false
           args: ${{ matrix.args }}
 
   checksums:

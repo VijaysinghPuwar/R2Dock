@@ -4,6 +4,8 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod classify;
+pub mod ffmpeg;
 pub mod keys;
 pub mod plan;
 pub mod probe;
+pub mod verify;

@@ -1,6 +1,6 @@
 # Plan: Compress audio and video before upload
 
-Status: **In progress.** Target release: 0.3.0. Step 1 is done (see Progress at the end).
+Status: **In progress.** Target release: 0.3.0. Steps 1 and 2 are done (see Progress at the end).
 
 ## Goal
 
@@ -283,3 +283,11 @@ flowchart LR
 | Step | Status | Notes |
 |---|---|---|
 | 1 | Done | `crates/r2dock-media`: `probe` (Symphonia 0.6, features `mp3`, `aac`, `alac`, `flac`, `pcm`, `isomp4`, `wav`, `aiff`, `id3v2`), `classify`, `plan` (ladder, never raising bitrate, sample rate, or channels, margin and marker checks, estimate), `keys` (output key). Decision table tests pass. On the three real audiobooks the probe takes under 1 ms each and the plan gives 50%, 33%, and 50% smaller at Speech 32 kbps; the 48 kbps file is skipped at Speech 48 kbps. Mono music targets are half the stereo bitrate (MP3 VBR about 85 or 60 kbps, Opus 64 kbps). |
+| 2 | Done | `ffmpeg` module: fixed argument arrays (`file:` paths, `-protocol_whitelist file`), `-progress pipe:1` parser, runner with continuous stdout and stderr draining, watchdog (2 minutes of silence), cancel, and cleanup (`process-wrap`: Job Object with kill-on-close on Windows, own process group on macOS and Linux, kill on drop), messages without local folders, sample test, duplicated-stereo check (`pan` + `volumedetect`), and `verify` (codec and duration within 1 s or 0.5%). Integration tests run with a real FFmpeg in CI on all three OSes. Real audiobooks, full encode at Speech 32 kbps on an Apple M5: 660 to 330 MB (50.0%, sample test predicted 49.8% in 0.4 s, 172 s), 530 to 353 MB (33.3%, 178 s), 699 to 350 MB (50.0%, 171 s); a second pass skips all three by marker. |
+
+Changes from the plan made during step 2:
+
+- Cancel kills FFmpeg at once instead of sending `q` first: a cancelled output is deleted anyway, and FFmpeg runs with `-nostdin`, so it never reads a key.
+- MP4 output (`.m4a`, `.m4b`, `.mp4`) carries no marker tag. FFmpeg writes custom MP4 tags only with `-movflags use_metadata_tags`, which moves every other tag (title, author) to a form many players ignore. The bitrate checks already stop a second compression of MP4 output (tested).
+- On macOS and Linux, FFmpeg exits after R2Dock dies on its next progress write to the closed pipe (about twice a second), instead of through a death signal, which would need unsafe code.
+- Process priority is lowered on Windows (`BELOW_NORMAL_PRIORITY_CLASS`). macOS and Linux run FFmpeg at normal priority; encodes are limited to one at a time by default (step 4).
