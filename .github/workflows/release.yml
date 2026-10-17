@@ -19,18 +19,22 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
+            bundles: dmg
           - name: macOS Intel
             os: macos-latest
             target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin
+            bundles: dmg
           - name: Windows x64
             os: windows-latest
             target: x86_64-pc-windows-msvc
             args: ""
+            bundles: nsis
           - name: Linux x64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             args: ""
+            bundles: appimage,deb
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -58,30 +62,67 @@ jobs:
 
       - run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: R2Dock ${{ github.ref_name }}
-          releaseBody: |
-            Unsigned preview build. See the README for install notes on each platform.
-          releaseDraft: false
-          prerelease: false
-          args: ${{ matrix.args }}
+      - name: Build the installer
+        run: npm run tauri build -- ${{ matrix.args }} --bundles ${{ matrix.bundles }}
 
-  checksums:
-    name: SHA-256 checksums
+      # One clearly named file per platform (no MSI, RPM, or updater archives).
+      - name: Collect and name the installers
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          mkdir dist
+          case "${{ matrix.name }}" in
+            "macOS Apple Silicon")
+              cp target/aarch64-apple-darwin/release/bundle/dmg/*.dmg "dist/R2Dock-$v-macOS-Apple-Silicon.dmg" ;;
+            "macOS Intel")
+              cp target/x86_64-apple-darwin/release/bundle/dmg/*.dmg "dist/R2Dock-$v-macOS-Intel.dmg" ;;
+            "Windows x64")
+              cp target/release/bundle/nsis/*-setup.exe "dist/R2Dock-$v-Windows-Setup.exe" ;;
+            "Linux x64")
+              cp target/release/bundle/appimage/*.AppImage "dist/R2Dock-$v-Linux.AppImage"
+              cp target/release/bundle/deb/*.deb "dist/R2Dock-$v-Linux.deb" ;;
+          esac
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    name: Publish release
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
     steps:
-      - name: Download release assets and publish checksums
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
-          REPO: ${{ github.repository }}
         run: |
-          mkdir assets && cd assets
-          gh release download "$TAG" --repo "$REPO"
-          sha256sum * > SHA256SUMS.txt
-          gh release upload "$TAG" SHA256SUMS.txt --repo "$REPO" --clobber
+          v="${TAG#v}"
+          cd dist && sha256sum ./* | sed 's#  ./#  #' > SHA256SUMS.txt && cd ..
+          {
+            echo "## Which file do I download?"
+            echo
+            echo "| Your computer | File |"
+            echo "|---|---|"
+            echo "| Mac with Apple Silicon (M1, M2, M3, M4, M5) | \`R2Dock-$v-macOS-Apple-Silicon.dmg\` |"
+            echo "| Mac with an Intel processor | \`R2Dock-$v-macOS-Intel.dmg\` |"
+            echo "| Windows 10 or 11 | \`R2Dock-$v-Windows-Setup.exe\` |"
+            echo "| Linux (any distribution) | \`R2Dock-$v-Linux.AppImage\` |"
+            echo "| Linux (Debian, Ubuntu) | \`R2Dock-$v-Linux.deb\` |"
+            echo
+            echo "Not sure which Mac you have? Apple menu > About This Mac: \"Chip: Apple M...\" means Apple Silicon; \"Processor: Intel\" means Intel."
+            echo
+            echo "Unsigned preview build. See the README for install notes on each platform. \`SHA256SUMS.txt\` lists the checksum of every file."
+            echo
+            awk -v ver="$v" '$0 ~ "^## \\[" ver "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md
+          } > notes.md
+          cat notes.md
+          gh release create "$TAG" dist/* --title "R2Dock $TAG" --notes-file notes.md --verify-tag

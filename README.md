@@ -54,7 +54,7 @@ Cloudflare R2 is cheap and fast object storage, but managing it usually means a 
 
 ## Get started
 
-1. **Install** the build for your system from [Releases](https://github.com/VijaysinghPuwar/R2Dock/releases).
+1. **Install** the file for your computer from the [latest release](https://github.com/VijaysinghPuwar/R2Dock/releases/latest): `macOS-Apple-Silicon.dmg` for Macs with an M chip, `macOS-Intel.dmg` for Intel Macs, `Windows-Setup.exe`, or `Linux.AppImage` / `Linux.deb`.
 2. **Create an R2 API token** in the Cloudflare dashboard: *R2 → Manage API tokens*. Copy the Account ID, Access Key ID, and Secret Access Key.
 3. **Connect** in R2Dock. With an *Object Read & Write* token, also type your bucket names (comma separated), because these tokens cannot list buckets.
 
