@@ -1,0 +1,15 @@
+[package]
+name = "r2dock-testkit"
+description = "Test-only helpers: an in-process S3-compatible server for integration tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+s3s = "0.14"
+s3s-fs = "0.14"
+hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "tokio", "http1", "http2"] }
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
+tempfile.workspace = true

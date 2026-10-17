@@ -1,0 +1,49 @@
+[package]
+name = "r2dock-transfer"
+description = "Transfer engine for R2Dock: streaming uploads and downloads with bounded concurrency"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+r2dock-core.workspace = true
+r2dock-r2.workspace = true
+aws-sdk-s3.workspace = true
+aws-smithy-types = { workspace = true, features = ["http-body-1-x"] }
+base64.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+fs4.workspace = true
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+hex.workspace = true
+http-body = "1"
+http-body-util = "0.1"
+md-5.workspace = true
+mime_guess.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+same-file = "1"
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util = { workspace = true, features = ["io"] }
+tracing.workspace = true
+ts-rs.workspace = true
+uuid.workspace = true
+walkdir.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+r2dock-testkit = { path = "../r2dock-testkit" }
+secrecy.workspace = true
+serde_json.workspace = true
+parking_lot.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,30 @@
+[package]
+name = "r2dock-r2"
+description = "R2 client builder, listing, object operations, and error mapping for R2Dock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+r2dock-core.workspace = true
+aws-sdk-s3.workspace = true
+aws-smithy-types.workspace = true
+aws-smithy-runtime-api.workspace = true
+chrono.workspace = true
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+secrecy.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+r2dock-testkit = { path = "../r2dock-testkit" }
+tempfile.workspace = true
+
+[lints]
+workspace = true
