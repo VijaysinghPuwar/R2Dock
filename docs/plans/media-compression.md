@@ -240,7 +240,7 @@ flowchart LR
 - **Transfer engine**: new job state `Compressing` before `Running`; the upload spec gains an optional compression plan. Encodes write to `<app cache>/compress/<job id>.<ext>`, then the existing upload path (single PUT or multipart, with checksums and resume) uploads that file.
 - **Pipeline and limits**: a separate semaphore for encodes (default 1, below-normal priority) so file 2 compresses while file 1 uploads.
 - **Object metadata**: `x-amz-meta-r2dock-original-size`, `-original-name`, `-compression` (preset).
-- **Activity log**: `compress_started`, `compress_finished` (sizes, ratio, preset, encoder, duration), `compress_skipped` (reason), `compress_failed` (FFmpeg exit code and last error line), with names hashed per the existing rules.
+- **Activity log** (CSV, see [logs-and-csv.md](logs-and-csv.md)): `compress_started`, `compress_finished` (sizes, ratio, preset, encoder, duration), `compress_skipped` (reason), `compress_failed` (FFmpeg exit code and last error line), with names hashed per the existing rules. Settings shows the log folder location with Open folder and Copy path, so a user can find the exact row for any problem.
 
 ## Security
 
