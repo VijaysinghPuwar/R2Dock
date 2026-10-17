@@ -1021,6 +1021,8 @@ No test results are claimed in this plan. None have been run.
 
 ## 21. Future Enhancements
 
+- **Next (0.2.0): optional audio and video compression before upload.** Full plan: [docs/plans/media-compression.md](docs/plans/media-compression.md).
+
 - Presigned share links with expiry picker and warnings (v1.1).
 - Video and PDF previews.
 - Parallel ranged downloads for large files.
