@@ -2,6 +2,19 @@
 
 All notable changes are listed here. The format follows Keep a Changelog, and the project uses Semantic Versioning.
 
+## [0.2.0] - 2026-10-17
+
+### Added
+
+- Settings > Advanced > Logs: activity and technical log locations with Open folder and Copy path, Change and Reset to default for the activity folder, and Export as CSV for Today, the last 7 days, the last 30 days, or everything.
+- Help > Open Activity Log Folder on macOS, and the same action in the keyboard shortcut sheet (`?`) on every platform.
+- "Open activity log" in error details for failed transfers and connection tests.
+
+### Changed
+
+- The activity log is now CSV (`activity-YYYY-MM-DD.csv`) and opens in Excel, Numbers, or Google Sheets. Cells that a spreadsheet would run as a formula are neutralized. Older `.jsonl` files are still cleaned up and included in exports.
+- Logs now hide the account id in R2 endpoint host names.
+
 ## [0.1.1] - 2026-10-17
 
 ### Fixed
