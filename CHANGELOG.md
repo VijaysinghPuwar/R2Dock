@@ -2,7 +2,13 @@
 
 All notable changes are listed here. The format follows Keep a Changelog, and the project uses Semantic Versioning.
 
-## [0.1.0] - 2026-10-17
+## [0.1.1] - 2026-10-17
+
+### Fixed
+
+- Release builds: the Rust Tauri crate is now 2.12, matching the JavaScript API package, so installers build on every platform.
+
+## [0.1.0] - 2026-10-17 (not released)
 
 First preview release.
 
