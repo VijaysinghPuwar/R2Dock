@@ -11,5 +11,10 @@ R2Dock is distributed under the MIT License. It bundles or links the following t
 | React, TanStack Query, TanStack Virtual, Zustand, Radix UI | MIT | Frontend |
 | keyring | MIT or Apache-2.0 | OS credential store access |
 | s3s, s3s-fs (tests only, not shipped) | Apache-2.0 | Local S3 server for integration tests |
+| Symphonia (unmodified crates) | MPL-2.0 | Reading audio file details for compression. Source: https://github.com/pdeljanov/Symphonia |
+| process-wrap | MIT or Apache-2.0 | Running FFmpeg in a Job Object or process group |
+| zstd | MIT or BSD-3-Clause (zstd library: BSD-3-Clause) | Unpacking the compression tools |
+
+**FFmpeg** is not part of R2Dock and is not included in its installers. When the user turns on compression, R2Dock downloads FFmpeg 9.0.2 (LGPL v3, built with `--enable-version3`, without GPL or nonfree components) from this project's `tools-ffmpeg-*` release and runs it as a separate program. That release lists the exact sources: BtbN FFmpeg-Builds for Windows and Linux, and `tools/ffmpeg/build-macos.sh` with FFmpeg, LAME 3.100 (LGPL), and Opus 1.5.2 (BSD) for macOS. Their license texts are published next to the binaries.
 
 The full dependency list with versions is in `Cargo.lock` and `package-lock.json`. No source code from the reference projects reviewed during planning was copied into R2Dock.

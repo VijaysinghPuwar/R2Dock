@@ -80,6 +80,11 @@ jobs:
       - name: Rust tests
         run: cargo test --workspace
 
+      # Downloads this OS's pinned FFmpeg package from the tools release,
+      # verifies it, and compresses a file with it.
+      - name: Compression tools install on this OS
+        run: cargo test -p r2dock-media --test live_tools -- --ignored
+
       - name: Generated IPC types are up to date
         if: runner.os == 'Linux'
         run: git diff --exit-code -- src/ipc/bindings

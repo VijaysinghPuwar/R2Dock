@@ -28,6 +28,34 @@ fn b64(md5: &[u8; 16]) -> String {
     base64::engine::general_purpose::STANDARD.encode(md5)
 }
 
+/// Object metadata for a compressed upload (`x-amz-meta-*`): original size,
+/// original file name (percent-encoded, since headers are ASCII), and preset.
+pub(crate) fn compression_metadata(spec: &UploadSpec) -> Vec<(String, String)> {
+    let Some(c) = spec.compressed_copy() else {
+        return Vec::new();
+    };
+    vec![
+        ("r2dock-original-size".into(), c.original_size.to_string()),
+        (
+            "r2dock-original-name".into(),
+            percent_encode(base_name(&c.original_key)),
+        ),
+        ("r2dock-compression".into(), c.preset.clone()),
+    ]
+}
+
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(char::from(b));
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 fn content_type(key: &str) -> String {
     mime_guess::from_path(key)
         .first_or_octet_stream()
@@ -136,6 +164,9 @@ async fn single(
         .content_md5(b64(&md5))
         .content_type(content_type(&spec.key))
         .body(body);
+    for (k, v) in compression_metadata(spec) {
+        req = req.metadata(k, v);
+    }
     if spec.policy != ConflictPolicy::Replace {
         // Atomic on R2: fails with 412 if the key appeared meanwhile.
         req = req.if_none_match("*");
@@ -176,16 +207,17 @@ async fn create_upload(
 ) -> Result<MultipartState, JobError> {
     let part_size = part_size_for(source.fingerprint.len)
         .map_err(|e| JobError::fatal(r2dock_core::AppError::invalid_input(e.to_string())))?;
-    let out = ctx
+    let mut req = ctx
         .client
         .sdk()
         .create_multipart_upload()
         .bucket(&spec.bucket)
         .key(&spec.key)
-        .content_type(content_type(&spec.key))
-        .send()
-        .await
-        .map_err(R2Error::from_sdk)?;
+        .content_type(content_type(&spec.key));
+    for (k, v) in compression_metadata(spec) {
+        req = req.metadata(k, v);
+    }
+    let out = req.send().await.map_err(R2Error::from_sdk)?;
     let upload_id = out
         .upload_id()
         .ok_or_else(|| {
@@ -505,4 +537,17 @@ async fn multipart(
     }
     ctx.clear_resume();
     Ok(Outcome::Completed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_encoding_keeps_headers_ascii() {
+        assert_eq!(percent_encode("Book One.wav"), "Book%20One.wav");
+        assert_eq!(percent_encode("名前.mp3"), "%E5%90%8D%E5%89%8D.mp3");
+        assert_eq!(percent_encode("a\r\nb"), "a%0D%0Ab");
+        assert!(percent_encode("x\"y;z").is_ascii());
+    }
 }

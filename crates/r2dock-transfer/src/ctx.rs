@@ -76,7 +76,46 @@ pub struct MultipartState {
     pub key: String,
     pub part_size: u64,
     pub fingerprint: Fingerprint,
+    /// Stored as a list: map keys are JSON strings, which cannot be read back
+    /// as numbers inside the journal's internally tagged enums.
+    #[serde(with = "parts_as_list")]
     pub done: BTreeMap<i32, PartDone>,
+}
+
+mod parts_as_list {
+    use std::collections::BTreeMap;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::PartDone;
+
+    #[derive(Serialize, Deserialize)]
+    struct Item {
+        number: i32,
+        #[serde(flatten)]
+        part: PartDone,
+    }
+
+    pub fn serialize<S: Serializer>(
+        map: &BTreeMap<i32, PartDone>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        let items: Vec<Item> = map
+            .iter()
+            .map(|(n, p)| Item {
+                number: *n,
+                part: p.clone(),
+            })
+            .collect();
+        items.serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<BTreeMap<i32, PartDone>, D::Error> {
+        let items = Vec::<Item>::deserialize(d)?;
+        Ok(items.into_iter().map(|i| (i.number, i.part)).collect())
+    }
 }
 
 /// Saved state of a partial download.

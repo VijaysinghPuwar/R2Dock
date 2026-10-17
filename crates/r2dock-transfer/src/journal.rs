@@ -150,6 +150,64 @@ mod tests {
         assert!(loaded.is_empty());
     }
 
+    /// Regression: `u128` fields cannot be read back inside internally
+    /// tagged enums, which made every journal with a multipart upload fail
+    /// to load.
+    #[test]
+    fn multipart_and_compressed_entries_reload() {
+        use crate::ctx::MultipartState;
+        use crate::model::{CompressedCopy, CompressionResult, UploadSpec};
+        let fingerprint = crate::source::Fingerprint {
+            len: 1,
+            mtime_ns: 1_792_272_545_142_633_478,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.json");
+        let (j, _) = Journal::load(path.clone());
+        let e = JournalEntry {
+            id: uuid::Uuid::new_v4(),
+            spec: JobSpec::Upload(UploadSpec {
+                connection: uuid::Uuid::nil(),
+                bucket: "bkt".into(),
+                key: "k.mp3".into(),
+                local: PathBuf::from("/tmp/copy.mp3"),
+                size: 10,
+                policy: ConflictPolicy::Ask,
+                identity: None,
+                compression: None,
+                compressed: Some(CompressionResult::Compressed(CompressedCopy {
+                    temp: PathBuf::from("/tmp/copy.mp3"),
+                    original_local: PathBuf::from("/tmp/k.mp3"),
+                    original_key: "k.mp3".into(),
+                    original_size: 20,
+                    original: fingerprint,
+                    preset: "mp3-32k".into(),
+                })),
+            }),
+            group: None,
+            resume: ResumeState::Multipart(MultipartState {
+                upload_id: "u".into(),
+                key: "k.mp3".into(),
+                part_size: 8,
+                fingerprint,
+                done: [(
+                    1,
+                    crate::ctx::PartDone {
+                        etag: "\"e1\"".into(),
+                        md5: "00".into(),
+                        len: 8,
+                    },
+                )]
+                .into(),
+            }),
+            created_at: "2026-10-17T00:00:00Z".into(),
+        };
+        j.upsert(e.clone());
+        j.flush();
+        let (_, loaded) = Journal::load(path);
+        assert_eq!(loaded, vec![e]);
+    }
+
     #[test]
     fn corrupt_journal_is_ignored() {
         let dir = tempfile::tempdir().unwrap();

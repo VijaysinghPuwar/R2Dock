@@ -6,12 +6,14 @@
 //! final size check run later, after FFmpeg has encoded something.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::classify::{Content, ContentOverride, classify};
 use crate::probe::{AudioCodec, AudioProbe};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum Mode {
     /// MP3 stays MP3 and M4A stays M4A, so keys and links do not change.
     #[default]
@@ -20,16 +22,18 @@ pub enum Mode {
     Smallest,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum SpeechQuality {
     #[default]
     Kbps32,
     Kbps48,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum MusicQuality {
     /// MP3 VBR quality 4, about 165 kbps.
     #[default]
@@ -39,8 +43,9 @@ pub enum MusicQuality {
 }
 
 /// What to do with WAV, AIFF, FLAC, and ALAC sources.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum LosslessAction {
     /// Lossy, smallest: MP3 (Opus in Smallest mode).
     #[default]
@@ -50,8 +55,9 @@ pub enum LosslessAction {
     Keep,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct AudioSettings {
     pub mode: Mode,
     pub speech: SpeechQuality,
@@ -133,8 +139,9 @@ pub struct AudioTarget {
 }
 
 /// Why a file is uploaded unchanged.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", tag = "reason")]
+#[ts(export)]
 pub enum SkipReason {
     /// Handled by the video path.
     Video,
@@ -292,11 +299,13 @@ fn decide(
     };
 
     // Never raise the bitrate: a lossy source at or below the target stays.
+    // Headers and tags add a little to the measured bitrate, so a source
+    // within 3% of the target counts as already there.
     let real = probe.real_bitrate().unwrap_or(0);
     let nominal = encoding.nominal_bps();
     if !probe.codec.is_lossless()
         && let Some(target) = nominal
-        && real <= target
+        && real <= target + target * 3 / 100
     {
         return Err(SkipReason::AlreadyCompressed {
             kbps: u32::try_from(real / 1000).unwrap_or(u32::MAX),

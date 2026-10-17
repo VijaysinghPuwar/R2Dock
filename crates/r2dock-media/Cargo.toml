@@ -8,6 +8,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+fs4.workspace = true
 hex.workspace = true
 process-wrap = { version = "10", default-features = false, features = ["tokio1", "job-object", "kill-on-drop", "process-group"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2"] }
@@ -19,6 +20,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["process"] }
 tokio-util.workspace = true
+ts-rs.workspace = true
 zstd = "0.13"
 
 [dev-dependencies]

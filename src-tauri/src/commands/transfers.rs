@@ -162,6 +162,8 @@ async fn upload_start_inner(
                 size: f.size,
                 policy,
                 identity: f.identity,
+                compression: None,
+                compressed: None,
             })
         })
         .collect();

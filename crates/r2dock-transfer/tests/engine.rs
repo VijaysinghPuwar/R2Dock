@@ -103,6 +103,8 @@ fn upload(local: PathBuf, key: &str, policy: ConflictPolicy) -> JobSpec {
         size,
         policy,
         identity: None,
+        compression: None,
+        compressed: None,
     })
 }
 
@@ -573,6 +575,58 @@ async fn many_small_files_respect_concurrency() {
     h.engine.clear_finished();
     assert!(h.engine.snapshot().is_empty());
     let _ = h.s3.endpoint.len();
+}
+
+/// Regression: a paused multipart upload comes back after a restart and
+/// finishes from its saved parts (the journal used to fail to load).
+#[tokio::test]
+async fn paused_multipart_resumes_after_restart() {
+    let s3 = LocalS3::start(&[BUCKET]).await;
+    let tweak = |c: &mut EngineConfig| {
+        c.multipart_threshold = 16 * MIB;
+        c.parts_per_job = 1;
+        c.global_parts = 1;
+    };
+    let first = harness_on(s3, SECRET_KEY, tempfile::tempdir().unwrap(), tweak).await;
+    let data = pattern(64 * MIB);
+    let local = write_file(first.files.path(), "r.bin", &data);
+    let id = first.engine.enqueue(
+        vec![upload(local.clone(), "r.bin", ConflictPolicy::Replace)],
+        None,
+    )[0];
+    wait_state(&first.engine, id, &[JobState::Running]).await;
+    // Let at least one part finish, then pause.
+    for _ in 0..500 {
+        if job(&first.engine, id).parts_done.unwrap_or(0) >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    first.engine.control(id, JobAction::Pause).unwrap();
+    let j = wait_state(&first.engine, id, &[JobState::Paused, JobState::Completed]).await;
+    if j.state == JobState::Completed {
+        return; // too fast to test on this machine
+    }
+    first.engine.flush();
+    let Harness {
+        s3,
+        data: dir,
+        engine,
+        files,
+        ..
+    } = first;
+    drop(engine);
+
+    let second = harness_on(s3, SECRET_KEY, dir, tweak).await;
+    let jobs = second.engine.snapshot();
+    assert_eq!(jobs.len(), 1, "the paused upload was restored");
+    assert_eq!(jobs[0].state, JobState::Interrupted);
+    assert!(jobs[0].parts_done.unwrap_or(0) >= 1);
+    second.engine.control(id, JobAction::Resume).unwrap();
+    let j = wait_state(&second.engine, id, &[JobState::Completed, JobState::Failed]).await;
+    assert_eq!(j.state, JobState::Completed, "{:?}", j.error);
+    assert_eq!(get(&second.client, "r.bin").await, data);
+    drop(files);
 }
 
 /// Regression: parts wait for global slots inside their own futures, so

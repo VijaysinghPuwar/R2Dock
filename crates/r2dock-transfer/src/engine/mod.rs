@@ -3,6 +3,11 @@
 //! Bounded concurrency: a fixed number of jobs run at once, and a global
 //! semaphore caps in-flight part requests. Groups (folder transfers) are
 //! scheduled fairly so one huge folder does not starve a single file.
+//! Compression before upload runs beside the scheduler (see [`compress`]).
+
+mod compress;
+
+pub use compress::{CompressionEvent, CompressionObserver, MediaRuntime};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
@@ -26,8 +31,8 @@ use crate::ctx::{JobCtx, JobHooks, Outcome, ResumeState, RunControl, Stop};
 use crate::history::{History, HistoryEntry};
 use crate::journal::{Journal, JournalEntry};
 use crate::model::{
-    Direction, GroupInfo, JobAction, JobId, JobSnapshot, JobSpec, JobState, ProgressUpdate,
-    TransferEvent,
+    CompressionResult, CompressionView, Direction, GroupInfo, JobAction, JobId, JobSnapshot,
+    JobSpec, JobState, ProgressUpdate, TransferEvent,
 };
 use crate::progress::{Counter, SpeedMeter};
 use crate::retry::{JobError, MAX_ATTEMPTS, backoff};
@@ -97,6 +102,8 @@ struct Inner {
     journal: Arc<Journal>,
     history: Arc<History>,
     config: EngineConfig,
+    media: RwLock<Option<MediaRuntime>>,
+    compression_observer: RwLock<Option<CompressionObserver>>,
 }
 
 #[derive(Clone)]
@@ -130,6 +137,8 @@ impl Engine {
             journal,
             history,
             config,
+            media: RwLock::new(None),
+            compression_observer: RwLock::new(None),
         });
         let engine = Self { inner };
         engine.restore(recovered);
@@ -140,7 +149,13 @@ impl Engine {
 
     fn restore(&self, recovered: Vec<JournalEntry>) {
         let mut jobs = self.inner.jobs.lock();
-        for e in recovered {
+        for mut e in recovered {
+            // A compressed copy that is gone means compressing again.
+            if let JobSpec::Upload(u) = &mut e.spec
+                && u.compressed_copy().is_some_and(|c| !c.temp.is_file())
+            {
+                compress::restore_original(u);
+            }
             let mut snap = self.inner.new_snapshot(e.id, &e.spec, e.group.clone());
             snap.state = JobState::Interrupted;
             snap.created_at = e.created_at.clone();
@@ -194,6 +209,23 @@ impl Engine {
 
     pub fn set_multipart_threshold(&self, bytes: u64) {
         *self.inner.threshold.lock() = bytes;
+    }
+
+    /// Set the FFmpeg and work folder used for compression (`None` when the
+    /// tools are not installed: uploads that ask for compression then go
+    /// ahead with the original). Deletes leftover copies no job refers to.
+    pub fn set_media(&self, media: Option<MediaRuntime>) {
+        if let Some(m) = &media {
+            let _ = std::fs::create_dir_all(&m.work_dir);
+            self.inner.sweep_work_dir(&m.work_dir);
+        }
+        *self.inner.media.write() = media;
+        self.inner.wake.notify_one();
+    }
+
+    /// Receive compression milestones (for the activity log).
+    pub fn observe_compression(&self, observer: CompressionObserver) {
+        *self.inner.compression_observer.write() = Some(observer);
     }
 
     pub fn snapshot(&self) -> Vec<JobSnapshot> {
@@ -263,8 +295,9 @@ impl Engine {
                 .iter()
                 .filter(|id| {
                     jobs.map.get(id).is_some_and(|e| {
-                        e.snap.pausable
-                            && (e.snap.state.is_active() || e.snap.state == JobState::Queued)
+                        e.snap.state == JobState::Compressing
+                            || (e.snap.pausable
+                                && (e.snap.state.is_active() || e.snap.state == JobState::Queued))
                     })
                 })
                 .copied()
@@ -336,7 +369,10 @@ impl Engine {
         let jobs = self.inner.jobs.lock();
         jobs.map
             .values()
-            .filter(|e| e.snap.state.is_active() || e.snap.state == JobState::Queued)
+            .filter(|e| {
+                e.snap.state.is_active()
+                    || matches!(e.snap.state, JobState::Queued | JobState::Compressing)
+            })
             .count()
     }
 }
@@ -355,7 +391,10 @@ impl Inner {
     fn local_display(&self, spec: &JobSpec) -> String {
         let home = self.config.home.as_deref();
         match spec {
-            JobSpec::Upload(u) => redact_path(&u.local, home),
+            JobSpec::Upload(u) => match u.compressed_copy() {
+                Some(c) => redact_path(&c.original_local, home),
+                None => redact_path(&u.local, home),
+            },
             JobSpec::Download(d) => redact_path(&d.dest_root.join(&d.rel_path), home),
         }
     }
@@ -363,8 +402,12 @@ impl Inner {
     fn new_snapshot(&self, id: JobId, spec: &JobSpec, group: Option<GroupInfo>) -> JobSnapshot {
         let threshold = *self.threshold.lock();
         let pausable = match spec {
-            JobSpec::Upload(u) => use_multipart(u.size, threshold),
+            JobSpec::Upload(u) => u.needs_compression() || use_multipart(u.size, threshold),
             JobSpec::Download(_) => true,
+        };
+        let compression = match spec {
+            JobSpec::Upload(u) => CompressionView::of(u),
+            JobSpec::Download(_) => None,
         };
         JobSnapshot {
             id,
@@ -388,6 +431,7 @@ impl Inner {
             error: None,
             created_at: now_rfc3339(),
             finished_at: None,
+            compression,
         }
     }
 
@@ -439,6 +483,7 @@ impl Inner {
 
     /// Start queued jobs while slots are free.
     fn schedule(self: &Arc<Self>) {
+        self.schedule_compression();
         let limit = self.effective_concurrency();
         let mut to_start = Vec::new();
         {
@@ -472,12 +517,15 @@ impl Inner {
                     .enumerate()
                     .filter(|(_, id)| {
                         map.get(id).is_some_and(|e| {
-                            e.snap.direction == Direction::Download
-                                || !busy.contains(&(
-                                    e.snap.connection_id,
-                                    e.snap.bucket.clone(),
-                                    e.spec.key().to_string(),
-                                ))
+                            let compressing =
+                                matches!(&e.spec, JobSpec::Upload(u) if u.needs_compression());
+                            !compressing
+                                && (e.snap.direction == Direction::Download
+                                    || !busy.contains(&(
+                                        e.snap.connection_id,
+                                        e.snap.bucket.clone(),
+                                        e.spec.key().to_string(),
+                                    )))
                         })
                     })
                     .min_by_key(|(i, id)| {
@@ -546,10 +594,15 @@ impl Inner {
             };
             match action {
                 JobAction::Pause => {
-                    if !e.snap.pausable {
+                    if state == JobState::Compressing {
+                        // The encode stops; resuming starts it again.
+                        if let Some(c) = &e.control {
+                            c.request_pause(true);
+                        }
+                        Then::Nothing
+                    } else if !e.snap.pausable {
                         return Err(not_applicable());
-                    }
-                    if state.is_active() {
+                    } else if state.is_active() {
                         if let Some(c) = &e.control {
                             let interrupt = e.snap.direction == Direction::Download
                                 || state == JobState::Retrying;
@@ -578,6 +631,13 @@ impl Inner {
                         return Err(not_applicable());
                     }
                     e.snap.attempt = 1;
+                    // A failed compression is tried again.
+                    if let JobSpec::Upload(u) = &mut e.spec
+                        && matches!(u.compressed, Some(CompressionResult::Failed { .. }))
+                    {
+                        u.compressed = None;
+                        e.snap.compression = CompressionView::of(u);
+                    }
                     requeue(e, queue)
                 }
                 JobAction::Resolve(policy) => {
@@ -591,7 +651,7 @@ impl Inner {
                     if state.is_terminal() {
                         return Err(not_applicable());
                     }
-                    if state.is_active() {
+                    if state.is_active() || state == JobState::Compressing {
                         if let Some(c) = &e.control {
                             c.request_cancel();
                         }
@@ -603,8 +663,13 @@ impl Inner {
                     }
                 }
                 JobAction::Dismiss => {
-                    if state.is_active() {
+                    if state.is_active() || state == JobState::Compressing {
                         return Err(not_applicable());
+                    }
+                    if let JobSpec::Upload(u) = &e.spec
+                        && let Some(c) = u.compressed_copy()
+                    {
+                        let _ = std::fs::remove_file(&c.temp);
                     }
                     let resume = if state == JobState::Completed {
                         ResumeState::None
@@ -638,8 +703,10 @@ impl Inner {
         Ok(())
     }
 
-    /// Abort a saved multipart upload or delete a partial download, in the background.
+    /// Abort a saved multipart upload or delete a partial download, in the
+    /// background. A compressed copy is deleted too.
     fn discard_partial(self: &Arc<Self>, id: JobId) {
+        self.drop_compressed(id, true);
         let (resume, connection, bucket) = {
             let jobs = self.jobs.lock();
             let Some(e) = jobs.map.get(&id) else { return };
@@ -710,6 +777,8 @@ impl Inner {
             JobState::Completed | JobState::Cancelled | JobState::Skipped
         ) {
             self.journal.remove(id);
+            // The copy is no longer needed; a finished job keeps its result.
+            self.drop_compressed(id, state != JobState::Completed);
         }
         let history = self.history.clone();
         tokio::task::spawn_blocking(move || history.append(&entry));
@@ -777,7 +846,8 @@ impl JobHooks for Hooks {
             let jobs = self.0.jobs.lock();
             let Some(e) = jobs.map.get(&id) else { return };
             let resume = e.resume.lock().clone();
-            if resume == ResumeState::None {
+            let has_copy = matches!(&e.spec, JobSpec::Upload(u) if u.compressed_copy().is_some());
+            if resume == ResumeState::None && !has_copy {
                 None
             } else {
                 Some(JournalEntry {
@@ -864,6 +934,30 @@ async fn progress_ticker(inner: Arc<Inner>) {
 }
 
 async fn run_job(inner: Arc<Inner>, id: JobId, control: Arc<RunControl>) {
+    // A compressed copy is used only while its original is unchanged.
+    let copy = {
+        let jobs = inner.jobs.lock();
+        jobs.map.get(&id).and_then(|e| match &e.spec {
+            JobSpec::Upload(u) => u.compressed_copy().cloned(),
+            JobSpec::Download(_) => None,
+        })
+    };
+    if let Some(copy) = copy {
+        let changed = tokio::task::spawn_blocking(move || compress::original_changed(&copy))
+            .await
+            .unwrap_or(true);
+        if changed {
+            inner.drop_compressed(id, true);
+            if let Some(e) = inner.jobs.lock().map.get_mut(&id)
+                && e.control.as_ref().is_some_and(|c| Arc::ptr_eq(c, &control))
+            {
+                e.control = None;
+            }
+            inner.set_state(id, JobState::Queued, None);
+            inner.wake.notify_one();
+            return;
+        }
+    }
     loop {
         let (spec, resume, counter, connection) = {
             let jobs = inner.jobs.lock();

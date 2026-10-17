@@ -1,6 +1,6 @@
 # Plan: Compress audio and video before upload
 
-Status: **In progress.** Target release: 0.3.0. Steps 1 and 2 are done (see Progress at the end).
+Status: **In progress.** Target release: 0.3.0. Steps 1 to 4 are done (see Progress at the end).
 
 ## Goal
 
@@ -189,7 +189,7 @@ Lessons from reading `ffmpeg-sidecar` (MIT) are applied, without copying code:
 
 **Recommendation: B, with C as an advanced option.**
 
-- Settings shows "Compression tools are not installed (about 40 MB)" with an Install button.
+- Settings shows "Compression tools are not installed" with the download size for this system (macOS about 18 MB; Windows about 91 MB; Linux about 97 MB) and an Install button.
 - Windows and Linux: **BtbN FFmpeg-Builds, LGPL static, version branch 9.0, from a month-end dated `autobuild-*` release** (dailies are deleted after 14 days; month-end builds are kept for 2 years). The archive is **mirrored as an asset on this repository's own GitHub release** (for example `tools-ffmpeg-9.0`), so it can never disappear or change.
 - macOS: BtbN does not build for macOS, so a **universal LGPL build is compiled from source in our own CI** with the same configuration and published to the same release.
 - The app contains the exact URL and **SHA-256 for each platform**. The download goes to the app data folder, is verified **before** extracting, and the binaries are picked by exact path. Anything that does not match is deleted and refused. R2Dock never uses third-party mirrors at runtime and never runs a bare `ffmpeg` from PATH unless the user chose it in Settings.
@@ -291,3 +291,11 @@ Changes from the plan made during step 2:
 - MP4 output (`.m4a`, `.m4b`, `.mp4`) carries no marker tag. FFmpeg writes custom MP4 tags only with `-movflags use_metadata_tags`, which moves every other tag (title, author) to a form many players ignore. The bitrate checks already stop a second compression of MP4 output (tested).
 - On macOS and Linux, FFmpeg exits after R2Dock dies on its next progress write to the closed pipe (about twice a second), instead of through a death signal, which would need unsafe code.
 - Process priority is lowered on Windows (`BELOW_NORMAL_PRIORITY_CLASS`). macOS and Linux run FFmpeg at normal priority; encodes are limited to one at a time by default (step 4).
+| 3 | Done | `tools`: pinned packages per platform (`manifest.rs`), HTTPS download limited to GitHub hosts, SHA-256 of each download checked before unpacking and of each binary after, atomic install, re-hash when size or modification time changes, refusal of replaced, symlinked, or edited files, remove; `detect` reads version, license, and encoders and checks a user-picked FFmpeg. `.github/workflows/tools.yml` published `tools-ffmpeg-9.0.2-1` (pre-release, never "Latest"): BtbN LGPL 9.0 for Windows and Linux (smoke-tested on their own OS), and macOS built from pinned, signature-checked sources by `tools/ffmpeg/build-macos.sh` (LGPL v3, LAME, Opus, VideoToolbox, system libraries only). Each binary is zstd-compressed on its own. CI installs the real package on Windows, macOS, and Linux and compresses a file with it. |
+| 4 | Done | Engine: `Compressing` state that holds no upload slot (separate encode limit, default 1), so files compress while others upload; the compressed copy replaces the original in the upload spec and is kept in the journal across restarts; the original is checked before and after encoding and again before upload (an edited original is compressed again); pause stops the encode and resume starts it again; cancel and dismiss delete the copy; "If compression fails" upload the original or fail the job; object metadata `r2dock-original-size`, `r2dock-original-name`, `r2dock-compression`; activity log rows `compress_started`, `compress_finished`, `compress_skipped`, `compress_failed`. Tests against the local S3 server and a real FFmpeg cover every case. |
+
+Changes from the plan made during steps 3 and 4:
+
+- The download is larger than first estimated: about 18 MB for macOS (built with only what compression needs) and about 91 to 97 MB for Windows and Linux (BtbN's full LGPL builds, zstd-compressed per binary). ffprobe is included for the video step.
+- Each binary is a separate `.zst` asset instead of an archive, so nothing has to be extracted from a container.
+- While fixing the journal for compressed copies, two serde limits were found that stopped any journal with a multipart upload from loading (released in 0.2.1, see the CHANGELOG).

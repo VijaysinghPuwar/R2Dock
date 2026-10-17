@@ -109,6 +109,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         );
         activity.event("app_start", fields);
     }
+    {
+        let log = activity.clone();
+        engine.observe_compression(Arc::new(move |e| log.compression(&e)));
+    }
     let activity_days = settings.preferences.activity_days;
     let trim_activity = activity.clone();
     tauri::async_runtime::spawn_blocking(move || trim_activity.trim(activity_days));

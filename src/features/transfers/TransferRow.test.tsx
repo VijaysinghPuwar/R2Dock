@@ -76,6 +76,26 @@ describe("TransferRow", () => {
     expect(openActivityFolder).toHaveBeenCalledTimes(1);
   });
 
+  it("shows compression progress and the saving", () => {
+    const { unmount } = renderWithProviders(
+      <TransferRow job={makeJob({ state: "compressing", pausable: true, compression: { kind: "pending", fraction: 0.42 } })} />,
+    );
+    expect(screen.getByText(/Compressing 42%/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+    unmount();
+    renderWithProviders(
+      <TransferRow
+        job={makeJob({
+          state: "completed",
+          totalBytes: 330_000_000,
+          compression: { kind: "saved", originalBytes: 660_000_000, bytes: 330_000_000, preset: "mp3-32k" },
+          finishedAt: "2026-10-17T10:03:00Z",
+        })}
+      />,
+    );
+    expect(screen.getByText(/Saved 330 MB \(50%\)/)).toBeInTheDocument();
+  });
+
   it("resolves conflicts with the chosen policy", async () => {
     renderWithProviders(<TransferRow job={makeJob({ id: "d", state: "needsDecision" })} />);
     await userEvent.click(screen.getByRole("button", { name: "Replace" }));

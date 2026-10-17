@@ -6,6 +6,7 @@
 pub mod classify;
 pub mod ffmpeg;
 pub mod keys;
+pub mod pipeline;
 pub mod plan;
 pub mod probe;
 pub mod tools;

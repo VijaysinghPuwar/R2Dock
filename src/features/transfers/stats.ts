@@ -5,6 +5,7 @@ import { formatEta, formatPercent, formatSpeed, joinDot, plural } from "../../li
 export type TransferTab = "active" | "queued" | "completed" | "failed";
 
 const TAB_OF: Record<JobState, TransferTab> = {
+  compressing: "active",
   preparing: "active",
   running: "active",
   retrying: "active",
@@ -25,7 +26,14 @@ export function tabOf(state: JobState): TransferTab {
 
 /** States where work is happening or about to happen without user input. */
 export function isMoving(state: JobState): boolean {
-  return state === "queued" || state === "preparing" || state === "running" || state === "retrying" || state === "verifying";
+  return (
+    state === "queued" ||
+    state === "compressing" ||
+    state === "preparing" ||
+    state === "running" ||
+    state === "retrying" ||
+    state === "verifying"
+  );
 }
 
 export function isTerminal(state: JobState): boolean {

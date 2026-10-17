@@ -19,8 +19,10 @@ use crate::retry::JobError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Fingerprint {
     pub len: u64,
-    /// Nanoseconds since the Unix epoch (0 when unknown).
-    pub mtime_ns: u128,
+    /// Nanoseconds since the Unix epoch (0 when unknown). A `u64` covers
+    /// dates up to the year 2554 and, unlike `u128`, can be read back from
+    /// the journal, whose entries are internally tagged serde enums.
+    pub mtime_ns: u64,
 }
 
 impl Fingerprint {
@@ -29,7 +31,7 @@ impl Fingerprint {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_nanos());
+            .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
         Self {
             len: meta.len(),
             mtime_ns,

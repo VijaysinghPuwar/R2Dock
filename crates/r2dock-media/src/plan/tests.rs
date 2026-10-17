@@ -314,3 +314,20 @@ fn presets_are_stable() {
     assert_eq!(Encoding::Opus { kbps: 24 }.preset(), "opus-24k");
     assert_eq!(Encoding::Flac.preset(), "flac");
 }
+
+#[test]
+fn header_overhead_still_counts_as_at_target() {
+    // 32.01 kbps measured on a 32 kbps file (headers and tags).
+    let mut p = mp3_book(32, 22_050);
+    p.size += p.size / 3000;
+    assert_eq!(
+        skip(run(&p, &settings())),
+        SkipReason::AlreadyCompressed { kbps: 32 }
+    );
+    // 34 kbps is a real difference, and the margin decides.
+    let p = mp3_book(34, 22_050);
+    assert!(matches!(
+        skip(run(&p, &settings())),
+        SkipReason::SavingTooSmall { .. }
+    ));
+}

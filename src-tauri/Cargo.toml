@@ -20,6 +20,7 @@ r2dock-core.workspace = true
 r2dock-r2.workspace = true
 r2dock-secrets.workspace = true
 r2dock-transfer.workspace = true
+r2dock-media.workspace = true
 
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"

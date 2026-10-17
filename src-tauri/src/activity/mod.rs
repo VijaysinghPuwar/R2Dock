@@ -104,6 +104,62 @@ impl ActivityLog {
         self.emit(action, "info", None, fields, None);
     }
 
+    /// Record a compression milestone from the transfer engine.
+    pub fn compression(&self, event: &r2dock_transfer::engine::CompressionEvent) {
+        use r2dock_transfer::engine::CompressionEvent as E;
+        let mut f = Map::new();
+        let job = |id: &uuid::Uuid| Value::String(id.simple().to_string()[..8].to_string());
+        let (action, outcome, duration, error) = match event {
+            E::Started { id, key } => {
+                f.insert("job".into(), job(id));
+                f.insert("key".into(), self.name(key).into());
+                ("compress_started", "info", None, None)
+            }
+            E::Finished {
+                id,
+                key,
+                original_bytes,
+                bytes,
+                preset,
+                secs,
+            } => {
+                f.insert("job".into(), job(id));
+                f.insert("key".into(), self.name(key).into());
+                f.insert("original_bytes".into(), (*original_bytes).into());
+                f.insert("bytes".into(), (*bytes).into());
+                f.insert("preset".into(), preset.clone().into());
+                let ratio = if *original_bytes == 0 {
+                    0.0
+                } else {
+                    *bytes as f64 / *original_bytes as f64
+                };
+                f.insert("ratio".into(), format!("{ratio:.3}").into());
+                (
+                    "compress_finished",
+                    "ok",
+                    Some(Duration::from_secs_f64(secs.max(0.0))),
+                    None,
+                )
+            }
+            E::Unchanged { id, key, reason } => {
+                f.insert("job".into(), job(id));
+                f.insert("key".into(), self.name(key).into());
+                f.insert(
+                    "reason".into(),
+                    serde_json::to_value(reason).unwrap_or(Value::Null),
+                );
+                ("compress_skipped", "info", None, None)
+            }
+            E::Failed { id, key, message } => {
+                f.insert("job".into(), job(id));
+                f.insert("key".into(), self.name(key).into());
+                let e = AppError::new(r2dock_core::ErrorCode::Internal, message.clone());
+                ("compress_failed", "error", None, Some(e))
+            }
+        };
+        self.emit(action, outcome, duration, f, error.as_ref());
+    }
+
     fn emit(
         &self,
         action: &str,
@@ -309,6 +365,40 @@ mod tests {
         let text = wait_for_lines(dir.path(), 2);
         assert!(text.contains(",media-library,covers/cover.webp,"));
         assert!(!text.contains("FAKESECRETVALUE123"));
+    }
+
+    #[test]
+    fn compression_events_become_rows() {
+        use r2dock_transfer::engine::CompressionEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let log = ActivityLog::start(dir.path().to_path_buf(), true, false);
+        let id = uuid::Uuid::new_v4();
+        log.compression(&CompressionEvent::Finished {
+            id,
+            key: "Audiobooks/Secret Title.mp3".into(),
+            original_bytes: 660_000_000,
+            bytes: 330_000_000,
+            preset: "mp3-32k".into(),
+            secs: 172.0,
+        });
+        log.compression(&CompressionEvent::Unchanged {
+            id,
+            key: "photo.png".into(),
+            reason: r2dock_media::pipeline::Unchanged::NotAudio,
+        });
+        let text = wait_for_lines(dir.path(), 3);
+        let rows: Vec<&str> = text.lines().skip(1).collect();
+        assert!(
+            rows[0].contains(",compress_finished,ok,172000,"),
+            "{}",
+            rows[0]
+        );
+        assert!(rows[0].contains("preset=mp3-32k"));
+        assert!(rows[0].contains("ratio=0.500"));
+        assert!(rows[0].contains(",#"), "key is hashed");
+        assert!(!text.contains("Secret Title"));
+        assert!(rows[1].contains(",compress_skipped,info,"));
+        assert!(rows[1].contains("notAudio"));
     }
 
     #[test]

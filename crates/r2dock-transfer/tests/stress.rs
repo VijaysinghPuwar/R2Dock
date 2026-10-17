@@ -109,6 +109,8 @@ async fn stress(small: u64, large: u64, large_size: u64) {
             size: bytes.len() as u64,
             policy: ConflictPolicy::Replace,
             identity: None,
+            compression: None,
+            compressed: None,
         }));
         (name, bytes)
     };

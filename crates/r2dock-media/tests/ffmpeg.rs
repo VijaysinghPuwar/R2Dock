@@ -564,3 +564,161 @@ async fn rejects_files_that_are_not_ffmpeg() {
     assert!(use_system(dir.path()).await.is_err(), "a folder is refused");
     assert!(use_system(&dir.path().join("missing")).await.is_err());
 }
+
+mod pipeline {
+    use super::*;
+    use r2dock_media::classify::ContentOverride;
+    use r2dock_media::pipeline::{PrepareJob, Prepared, Unchanged, prepare, upload_key};
+
+    async fn run_prepare(ff: &Ffmpeg, input: &Path, work: &Path) -> Prepared {
+        prepare(
+            ff,
+            PrepareJob {
+                input,
+                work_dir: work,
+                stem: "job-1",
+                settings: &AudioSettings::default(),
+                content: ContentOverride::Auto,
+            },
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .unwrap()
+    }
+
+    fn files(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .map(|r| {
+                r.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort();
+        v
+    }
+
+    #[tokio::test]
+    async fn compresses_speech_and_leaves_only_the_output() {
+        let Some(bin) = ffmpeg_bin() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("Talk.mp3");
+        let long = SPEECH.replace("d=150", "d=400");
+        make(
+            &bin,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                &long,
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "64k",
+                "-ac",
+                "1",
+                s(&input),
+            ],
+        );
+        let work = dir.path().join("work");
+        let Prepared::Compressed(c) = run_prepare(&Ffmpeg::new(bin), &input, &work).await else {
+            panic!("expected compression");
+        };
+        assert_eq!(c.preset, "mp3-32k");
+        assert_eq!(c.extension, None);
+        assert!(c.size * 100 / c.original_size < 60, "{c:?}");
+        assert_eq!(
+            files(&work),
+            vec!["job-1.mp3".to_string()],
+            "sample removed"
+        );
+        assert_eq!(upload_key("talks/Talk.mp3", &c), "talks/Talk.mp3");
+    }
+
+    #[tokio::test]
+    async fn leaves_small_and_non_audio_files_alone() {
+        let Some(bin) = ffmpeg_bin() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let ff = Ffmpeg::new(bin.clone());
+        let work = dir.path().join("work");
+        let already = dir.path().join("already.mp3");
+        let long = SPEECH.replace("d=150", "d=400");
+        make(
+            &bin,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                &long,
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "32k",
+                "-ac",
+                "1",
+                s(&already),
+            ],
+        );
+        let got = run_prepare(&ff, &already, &work).await;
+        assert!(matches!(
+            got,
+            Prepared::Unchanged(Unchanged::Plan {
+                reason: SkipReason::AlreadyCompressed { .. }
+            })
+        ));
+        let png = dir.path().join("photo.png");
+        make(
+            &bin,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=64x64",
+                "-frames:v",
+                "1",
+                s(&png),
+            ],
+        );
+        assert_eq!(
+            run_prepare(&ff, &png, &work).await,
+            Prepared::Unchanged(Unchanged::NotAudio)
+        );
+        let text = dir.path().join("notes.mp3");
+        std::fs::write(&text, b"plain text").unwrap();
+        assert_eq!(
+            run_prepare(&ff, &text, &work).await,
+            Prepared::Unchanged(Unchanged::NotAudio)
+        );
+        assert!(files(&work).is_empty());
+    }
+
+    #[tokio::test]
+    async fn duplicated_stereo_music_becomes_mono() {
+        let Some(bin) = ffmpeg_bin() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("song.mp3");
+        make(
+            &bin,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=f=440:r=44100:d=60",
+                "-ac",
+                "2",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "256k",
+                s(&input),
+            ],
+        );
+        let work = dir.path().join("work");
+        let Prepared::Compressed(c) = run_prepare(&Ffmpeg::new(bin), &input, &work).await else {
+            panic!("expected compression");
+        };
+        let out = probe_audio(&c.output).unwrap();
+        assert_eq!(out.channels, Some(1), "identical channels stored once");
+    }
+}

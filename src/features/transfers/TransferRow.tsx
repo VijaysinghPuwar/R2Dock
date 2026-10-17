@@ -22,7 +22,7 @@ import { groupText } from "./groups";
 import { isTerminal } from "./stats";
 import "./transfers.css";
 
-const PAUSABLE_STATES = new Set(["queued", "preparing", "running", "retrying"]);
+const PAUSABLE_STATES = new Set(["queued", "compressing", "preparing", "running", "retrying"]);
 
 function toneFor(job: JobSnapshot): ProgressTone {
   switch (job.state) {
@@ -67,6 +67,11 @@ function statusParts(job: JobSnapshot): { text: string; aria: string } {
     case "queued":
       push("Queued");
       break;
+    case "compressing": {
+      const fraction = job.compression?.kind === "pending" ? job.compression.fraction : null;
+      push(fraction === null ? "Compressing" : `Compressing ${Math.floor(fraction * 100)}%`);
+      break;
+    }
     case "preparing":
       push("Preparing...");
       break;
@@ -98,6 +103,11 @@ function statusParts(job: JobSnapshot): { text: string; aria: string } {
       const secs = durationSecs(job);
       push(job.direction === "upload" ? "Uploaded" : "Downloaded");
       push(formatBytes(job.totalBytes));
+      if (job.compression?.kind === "saved" && job.compression.originalBytes > 0) {
+        const saved = job.compression.originalBytes - job.compression.bytes;
+        const percent = Math.round((saved / job.compression.originalBytes) * 100);
+        push(`Saved ${formatBytes(saved)} (${percent}%)`);
+      }
       if (secs !== null) {
         push(formatDuration(secs));
         if (secs > 0) push(`${formatSpeed(job.totalBytes / secs)} average`);

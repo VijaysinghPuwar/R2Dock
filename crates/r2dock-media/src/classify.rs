@@ -1,19 +1,22 @@
 //! Speech or music, from what the probe found.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::probe::AudioProbe;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum Content {
     Speech,
     Music,
 }
 
 /// A per-upload choice that overrides the automatic guess.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum ContentOverride {
     #[default]
     Auto,

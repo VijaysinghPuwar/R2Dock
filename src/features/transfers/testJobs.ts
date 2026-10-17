@@ -24,6 +24,7 @@ export function makeJob(overrides: Partial<JobSnapshot> = {}): JobSnapshot {
     error: null,
     createdAt: "2026-10-17T10:00:00Z",
     finishedAt: null,
+    compression: null,
     ...overrides,
   };
 }

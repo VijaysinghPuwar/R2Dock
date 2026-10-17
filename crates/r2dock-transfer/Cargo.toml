@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 r2dock-core.workspace = true
 r2dock-r2.workspace = true
+r2dock-media.workspace = true
 aws-sdk-s3.workspace = true
 aws-smithy-types = { workspace = true, features = ["http-body-1-x"] }
 base64.workspace = true
