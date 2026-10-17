@@ -1,0 +1,70 @@
+.failure-list,
+.sample-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-height: 240px;
+  overflow: auto;
+  padding: var(--sp-2);
+  background: var(--bg-inset);
+  border-radius: var(--r-sm);
+}
+
+.failure-list li {
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+
+.result-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1-5);
+}
+
+.result-heading {
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.folder-picker {
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.picker-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-inset);
+}
+
+.picker-list {
+  max-height: 220px;
+  overflow: auto;
+  padding: var(--sp-1);
+}
+
+.picker-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 30px;
+  padding: 0 var(--sp-2);
+}
+
+.picker-button {
+  width: 100%;
+  border: none;
+  background: none;
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.picker-button:hover {
+  background: var(--bg-hover);
+}

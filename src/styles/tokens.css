@@ -1,0 +1,215 @@
+/* Design tokens (DESIGN.md section 5). Components use these variables only. */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-app: #1e1d22;
+  --bg-sidebar: #1a191e;
+  --bg-surface: #25242a;
+  --bg-raised: #2c2b32;
+  --bg-hover: #322f38;
+  --bg-selected: #3b3226;
+  --bg-inset: #17161b;
+
+  --border-subtle: #2f2d35;
+  --border-default: #3b3942;
+  --border-strong: #4d4b55;
+
+  --text-primary: #f2eadb;
+  --text-secondary: #b8ae9b;
+  --text-muted: #7f786d;
+  --text-on-accent: #1e1d22;
+  --text-on-danger: #ffffff;
+
+  --accent: #f4a836;
+  --accent-hover: #f7b955;
+  --accent-pressed: #db9324;
+  --accent-text: #f6b652;
+  --accent-subtle: #3d3121;
+  --focus-ring: #f6b652;
+
+  --success: #8fbf7a;
+  --success-subtle: #253122;
+  --warning: #d8c25b;
+  --warning-subtle: #33301c;
+  --danger: #e06c5a;
+  --danger-hover: #e78070;
+  --danger-pressed: #c95c4b;
+  --danger-subtle: #3a2420;
+  --info: #7fa7c9;
+  --info-subtle: #1f2a33;
+
+  --tint-folder: #c8b48a;
+  --tint-image: #8fafc4;
+  --tint-audio: #b8a2c9;
+  --tint-video: #c99a9a;
+  --tint-document: #a39c8f;
+  --tint-archive: #c9b07a;
+  --tint-code: #93bfa8;
+  --tint-unknown: #7d766a;
+
+  --logo-bar: var(--text-primary);
+  --logo-accent: var(--accent);
+
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --elevation-2: 0 6px 16px rgba(0, 0, 0, 0.4), 0 0 0 1px #3b3942;
+  --elevation-3: 0 16px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px #3b3942;
+  --backdrop: rgba(0, 0, 0, 0.55);
+  --skeleton: #2f2d35;
+  --skeleton-shine: #37353e;
+  --overlay-fill: rgba(61, 49, 33, 0.85);
+
+  /* Typography */
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --text-base: 13px;
+  --fs-display: 2rem;
+  --lh-display: 2.615rem;
+  --fs-title: 1.538rem;
+  --lh-title: 2.154rem;
+  --fs-heading: 1.154rem;
+  --lh-heading: 1.692rem;
+  --fs-body: 1rem;
+  --lh-body: 1.538rem;
+  --fs-small: 0.923rem;
+  --lh-small: 1.231rem;
+  --fs-micro: 0.846rem;
+  --lh-micro: 1.077rem;
+  --fs-mono: 0.923rem;
+  --lh-mono: 1.385rem;
+
+  /* Spacing (4 px base) */
+  --sp-0: 0;
+  --sp-0-5: 2px;
+  --sp-1: 4px;
+  --sp-1-5: 6px;
+  --sp-2: 8px;
+  --sp-2-5: 10px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-16: 64px;
+
+  /* Radius */
+  --r-xs: 3px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-full: 9999px;
+
+  /* Motion */
+  --dur-fast: 100ms;
+  --dur-base: 160ms;
+  --dur-slow: 240ms;
+  --ease-out: ease-out;
+  --ease-std: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layout */
+  --toolbar-h: 48px;
+  --sidebar-w: 240px;
+  --sidebar-w-collapsed: 56px;
+  --details-w: 320px;
+  --dock-h: 40px;
+  --dock-h-expanded: 280px;
+  --row-h: 32px;
+  --tile: 132px;
+  --header-h: 28px;
+  --control-h: 32px;
+  --control-h-sm: 28px;
+  --control-h-lg: 40px;
+  --icon: 16px;
+  --border-w: 1px;
+  --focus-w: 2px;
+}
+
+[data-theme="paper"] {
+  color-scheme: light;
+
+  --bg-app: #f2eee6;
+  --bg-sidebar: #eae5db;
+  --bg-surface: #faf8f3;
+  --bg-raised: #ffffff;
+  --bg-hover: #efeae0;
+  --bg-selected: #f3e6cf;
+  --bg-inset: #e9e4d9;
+
+  --border-subtle: #e2dcd0;
+  --border-default: #d3cbbc;
+  --border-strong: #b5ab99;
+
+  --text-primary: #2a2722;
+  --text-secondary: #5e574b;
+  --text-muted: #8c8475;
+  --text-on-accent: #ffffff;
+  --text-on-danger: #ffffff;
+
+  --accent: #a86a1e;
+  --accent-hover: #935c18;
+  --accent-pressed: #7c4d13;
+  --accent-text: #8f5a17;
+  --accent-subtle: #f1e2c6;
+  --focus-ring: #a86a1e;
+
+  --success: #3f7a35;
+  --success-subtle: #e3eedc;
+  --warning: #7d6a12;
+  --warning-subtle: #f2eccd;
+  --danger: #a93a2b;
+  --danger-hover: #b84d3f;
+  --danger-pressed: #93311f;
+  --danger-subtle: #f5deda;
+  --info: #3a6690;
+  --info-subtle: #dee7ef;
+
+  --tint-folder: #8a7346;
+  --tint-image: #3f6680;
+  --tint-audio: #6c548a;
+  --tint-video: #8a4e4e;
+  --tint-document: #625b4f;
+  --tint-archive: #7d6631;
+  --tint-code: #3f7560;
+  --tint-unknown: #8c8475;
+
+  --logo-bar: #2a2722;
+  --logo-accent: #a86a1e;
+
+  --elevation-1: 0 1px 2px rgba(42, 39, 34, 0.06);
+  --elevation-2: 0 6px 16px rgba(42, 39, 34, 0.1), 0 0 0 1px #e2dcd0;
+  --elevation-3: 0 16px 40px rgba(42, 39, 34, 0.16), 0 0 0 1px #e2dcd0;
+  --backdrop: rgba(42, 39, 34, 0.32);
+  --skeleton: #e9e4d9;
+  --skeleton-shine: #f2eee6;
+  --overlay-fill: rgba(241, 226, 198, 0.85);
+}
+
+[data-text-size="large"] {
+  --text-base: 14px;
+}
+
+[data-text-size="larger"] {
+  --text-base: 15px;
+}
+
+[data-density="compact"] {
+  --row-h: 26px;
+  --tile: 104px;
+}
+
+@media (max-height: 699px) {
+  :root {
+    --dock-h-expanded: 200px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+  }
+}

@@ -1,0 +1,234 @@
+/* Transfer dock and Transfers page (DESIGN 7.4 and Screen 5). */
+
+/* Dock */
+.dock {
+  position: relative;
+  flex-shrink: 0;
+  height: var(--dock-h);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border-top: var(--border-w) solid var(--border-default);
+  box-shadow: var(--elevation-1);
+  transition: opacity var(--dur-slow) var(--ease-std);
+}
+.dock.is-expanded {
+  height: var(--dock-h-expanded);
+}
+.dock.is-fading {
+  opacity: 0;
+}
+.dock-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+.dock-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--dock-h);
+  flex-shrink: 0;
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+}
+.dock-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.dock-text {
+  color: var(--text-primary);
+}
+.dock-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: var(--border-w) solid var(--border-subtle);
+}
+.dock-tabs {
+  padding: 0 var(--sp-3);
+  flex-shrink: 0;
+}
+.dock-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* Page */
+.xfer-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.xfer-page-head {
+  padding: var(--sp-6) var(--sp-8) 0;
+  flex-shrink: 0;
+}
+.xfer-title-block {
+  display: flex;
+  flex-direction: column;
+}
+.xfer-tabs-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+.xfer-tabs-row .tabs {
+  flex: 1;
+}
+.xfer-tabs-row > .btn {
+  margin-bottom: var(--sp-1);
+}
+.xfer-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* Virtualized list */
+.xfer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-1) var(--sp-2);
+}
+.xfer-page .xfer-scroll {
+  padding: var(--sp-2) var(--sp-6) var(--sp-4);
+}
+.xfer-vrow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+/* Rows */
+.xfer-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2-5);
+  min-height: 56px;
+  padding: var(--sp-1-5) var(--sp-3);
+  border-bottom: var(--border-w) solid var(--border-subtle);
+  border-radius: var(--r-sm);
+}
+.xfer-row:hover {
+  background: var(--bg-hover);
+}
+.xfer-row.is-compact {
+  min-height: 52px;
+  padding: var(--sp-1) var(--sp-2);
+}
+.xfer-row.is-child {
+  padding-left: var(--sp-10);
+}
+.xfer-row.is-group .xfer-name {
+  font-weight: 500;
+}
+.xfer-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-top: -2px;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: var(--r-xs);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.xfer-chevron:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.xfer-dir {
+  display: inline-flex;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.state-failed .xfer-dir {
+  color: var(--danger);
+}
+.state-completed .xfer-dir {
+  color: var(--success);
+}
+.state-paused .xfer-dir,
+.state-interrupted .xfer-dir,
+.state-needsDecision .xfer-dir {
+  color: var(--warning);
+}
+.xfer-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.xfer-line1,
+.xfer-line2,
+.xfer-line3 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.xfer-line1 {
+  min-height: var(--lh-body);
+}
+.xfer-line2,
+.xfer-line3 {
+  min-height: var(--lh-small);
+}
+.xfer-name {
+  flex: 1;
+}
+.xfer-size,
+.xfer-pct {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.xfer-dest {
+  flex: 1;
+}
+.xfer-progress {
+  width: 160px;
+  flex-shrink: 0;
+}
+.is-compact .xfer-progress {
+  width: 96px;
+}
+.xfer-pct {
+  width: 36px;
+  text-align: right;
+}
+.xfer-status {
+  flex: 1;
+}
+.xfer-status.is-failed {
+  color: var(--danger);
+}
+.xfer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+}
+.xfer-actions .btn-sm {
+  height: 22px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-small);
+}
+.xfer-detail {
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-1-5) var(--sp-2);
+  background: var(--bg-inset);
+  border-radius: var(--r-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,75 @@
+.view-list {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: var(--border-w) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  padding: var(--sp-1);
+}
+
+.recent-row {
+  display: grid;
+  grid-template-columns: var(--icon) minmax(0, 1fr) 96px 140px auto;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--sp-1) var(--sp-3);
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  text-align: left;
+}
+
+.recent-row + .recent-row,
+li + li > .recent-row {
+  border-top: var(--border-w) solid var(--border-subtle);
+}
+
+.recent-row.is-button:hover {
+  background: var(--bg-hover);
+}
+
+.recent-dir {
+  color: var(--text-secondary);
+}
+
+.recent-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.recent-size {
+  text-align: right;
+}
+
+.fav-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-right: var(--sp-2);
+  border-radius: var(--r-sm);
+}
+
+.fav-row:hover {
+  background: var(--bg-hover);
+}
+
+.fav-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2-5);
+  height: var(--row-h);
+  padding: 0 var(--sp-3);
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  text-align: left;
+}
+
+.fav-star {
+  color: var(--accent);
+}
