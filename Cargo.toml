@@ -12,7 +12,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 license = "MIT"
 rust-version = "1.94"
@@ -24,6 +24,7 @@ r2dock-core = { path = "crates/r2dock-core" }
 r2dock-secrets = { path = "crates/r2dock-secrets" }
 r2dock-r2 = { path = "crates/r2dock-r2" }
 r2dock-transfer = { path = "crates/r2dock-transfer" }
+r2dock-media = { path = "crates/r2dock-media" }
 
 aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
 aws-sdk-s3 = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }

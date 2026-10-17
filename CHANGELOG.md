@@ -2,6 +2,12 @@
 
 All notable changes are listed here. The format follows Keep a Changelog, and the project uses Semantic Versioning.
 
+## [0.2.1] - 2026-10-17
+
+### Fixed
+
+- Interrupted transfers are restored after a restart again. A large upload that was paused or interrupted saved a resume record that could not be read back, so every interrupted upload and download was dropped when R2Dock started. Records are now stored in a form that always loads, with tests that restart the engine.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added
