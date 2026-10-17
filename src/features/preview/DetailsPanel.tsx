@@ -39,6 +39,14 @@ export interface DetailsPanelProps {
   onClose: () => void;
 }
 
+/** "From 660 MB (mp3-32k)" when R2Dock compressed the object before upload. */
+function compressedFrom(metadata: Record<string, string>): string | null {
+  const size = Number(metadata["r2dock-original-size"]);
+  if (!Number.isFinite(size) || size <= 0) return null;
+  const preset = metadata["r2dock-compression"];
+  return `From ${formatBytes(size)}${preset ? ` (${preset})` : ""}`;
+}
+
 const ETAG_INFO =
   "Identifies this version of the object. It is not always an MD5 hash of the file. Files uploaded in parts have a different format.";
 const SIZE_INFO = "Calculating lists every object in this folder and uses R2 operations that may be billed.";
@@ -231,6 +239,11 @@ function FileDetails({ ctx, row }: { ctx: Ctx; row: FileRow }) {
             <MetaRow label="Size">
               <span className="meta-value num">{formatBytesLong(details.size)}</span>
             </MetaRow>
+            {compressedFrom(details.metadata) !== null && (
+              <MetaRow label="Compressed">
+                <span className="meta-value num">{compressedFrom(details.metadata)}</span>
+              </MetaRow>
+            )}
             <MetaRow label="Type">
               <span className="meta-value">{details.contentType ?? "Unknown"}</span>
             </MetaRow>

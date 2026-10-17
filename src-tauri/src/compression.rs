@@ -1,0 +1,215 @@
+//! Compression tools for the app: which FFmpeg to use, installing and
+//! removing the pinned download, and telling the transfer engine.
+//! The logic lives in `r2dock-media`; this file only holds app state.
+
+use std::path::PathBuf;
+
+use parking_lot::{Mutex, RwLock};
+use r2dock_core::AppError;
+use r2dock_media::ffmpeg::Ffmpeg;
+use r2dock_media::tools::detect::{self, BuildInfo};
+use r2dock_media::tools::install::{self, HttpFetch};
+use r2dock_media::tools::{Tools, ToolsError, manifest};
+use r2dock_transfer::engine::MediaRuntime;
+use tokio_util::sync::CancellationToken;
+
+use crate::dto::{CompressionStatus, ToolsState};
+use crate::state::AppState;
+
+pub struct CompressionService {
+    /// Downloaded tools (inside the app data folder).
+    pub tools_root: PathBuf,
+    /// Compressed copies waiting to upload (inside the app cache folder).
+    pub work_dir: PathBuf,
+    current: RwLock<Option<(Tools, BuildInfo)>>,
+    problem: RwLock<Option<String>>,
+    installing: Mutex<Option<CancellationToken>>,
+}
+
+fn tools_error(e: &ToolsError) -> AppError {
+    match e {
+        ToolsError::Cancelled => AppError::new(r2dock_core::ErrorCode::Cancelled, "Cancelled."),
+        ToolsError::UnsupportedPlatform => AppError::invalid_input(
+            "Compression tools are not available for this system. Use FFmpeg from your system instead.",
+        ),
+        ToolsError::Download(_) => AppError::new(
+            r2dock_core::ErrorCode::Network,
+            "The compression tools could not be downloaded. Check your connection and try again.",
+        )
+        .retryable(true),
+        other => AppError::internal(format!("Compression tools: {other}.")),
+    }
+}
+
+impl CompressionService {
+    pub fn new(tools_root: PathBuf, work_dir: PathBuf) -> Self {
+        Self {
+            tools_root,
+            work_dir,
+            current: RwLock::new(None),
+            problem: RwLock::new(None),
+            installing: Mutex::new(None),
+        }
+    }
+
+    /// Give the engine the current tools and encode limit (or none).
+    pub fn apply(&self, state: &AppState) {
+        let limit = usize::from(state.settings.read().preferences.compression.encode_limit);
+        let media = self.current.read().as_ref().map(|(t, _)| MediaRuntime {
+            ffmpeg: Ffmpeg::new(t.ffmpeg.clone()),
+            work_dir: self.work_dir.clone(),
+            encode_limit: limit,
+        });
+        state.engine.set_media(media);
+    }
+
+    /// Work out which FFmpeg to use (the picked one, else the download),
+    /// check it, and tell the engine.
+    pub async fn refresh(&self, state: &AppState) {
+        let system = state.settings.read().ffmpeg_path.clone();
+        let result = match system {
+            Some(path) => detect::use_system(&path).await,
+            None => {
+                let root = self.tools_root.clone();
+                let checked = tokio::task::spawn_blocking(move || {
+                    install::check_installed(&root, manifest::for_this_platform())
+                })
+                .await
+                .unwrap_or(Err(ToolsError::NotInstalled));
+                match checked {
+                    Ok(tools) => detect::inspect(&tools.ffmpeg)
+                        .await
+                        .map(|info| (tools, info)),
+                    Err(e) => Err(e),
+                }
+            }
+        };
+        match result {
+            Ok(ok) => {
+                *self.current.write() = Some(ok);
+                *self.problem.write() = None;
+            }
+            Err(ToolsError::NotInstalled) => {
+                *self.current.write() = None;
+                *self.problem.write() = None;
+            }
+            Err(e) => {
+                tracing::warn!("compression tools unusable: {e}");
+                *self.current.write() = None;
+                *self.problem.write() = Some(e.to_string());
+            }
+        }
+        self.apply(state);
+    }
+
+    pub fn status(&self, state: &AppState) -> CompressionStatus {
+        let current = self.current.read().clone();
+        let installing = self.installing.lock().is_some();
+        let problem = self.problem.read().clone();
+        let system = state.settings.read().ffmpeg_path.clone();
+        let tools_state = if installing {
+            ToolsState::Installing
+        } else if current.is_some() {
+            ToolsState::Ready
+        } else if problem.is_some() {
+            ToolsState::Unusable
+        } else {
+            ToolsState::NotInstalled
+        };
+        CompressionStatus {
+            state: tools_state,
+            source: current.as_ref().map(|(t, _)| t.source),
+            version: current.as_ref().map(|(t, _)| t.version.clone()),
+            license: current.as_ref().map(|(_, i)| i.license),
+            download_bytes: manifest::for_this_platform().map(|p| p.total_download()),
+            system_path: system.map(|p| state.display_path(&p)),
+            problem,
+        }
+    }
+
+    /// Download and install the pinned tools. `on_progress` gets
+    /// (done, total) bytes.
+    pub async fn install(
+        &self,
+        state: &AppState,
+        on_progress: impl FnMut(u64, u64) + Send,
+    ) -> Result<(), AppError> {
+        let pkg = manifest::for_this_platform()
+            .ok_or_else(|| tools_error(&ToolsError::UnsupportedPlatform))?;
+        let token = {
+            let mut slot = self.installing.lock();
+            if slot.is_some() {
+                return Err(AppError::invalid_input(
+                    "The tools are already being installed.",
+                ));
+            }
+            let token = CancellationToken::new();
+            *slot = Some(token.clone());
+            token
+        };
+        let agent = format!("R2Dock/{}", env!("CARGO_PKG_VERSION"));
+        let result = match HttpFetch::new(&agent) {
+            Ok(fetch) => install::install(&self.tools_root, pkg, &fetch, &token, on_progress).await,
+            Err(e) => Err(e),
+        };
+        *self.installing.lock() = None;
+        let result = result.map_err(|e| tools_error(&e));
+        if result.is_ok() {
+            // The download replaces a picked system FFmpeg.
+            state.settings.write().ffmpeg_path = None;
+            state.save_settings().await?;
+        }
+        self.refresh(state).await;
+        result.map(|_| ())
+    }
+
+    pub fn cancel_install(&self) {
+        if let Some(t) = self.installing.lock().as_ref() {
+            t.cancel();
+        }
+    }
+
+    /// Delete the downloaded tools. Blocking file removal runs off the
+    /// async runtime.
+    pub async fn remove(&self, state: &AppState) -> Result<(), AppError> {
+        let root = self.tools_root.clone();
+        tokio::task::spawn_blocking(move || install::remove(&root))
+            .await
+            .map_err(|_| AppError::internal("A background task stopped unexpectedly."))?
+            .map_err(|e| tools_error(&e))?;
+        self.refresh(state).await;
+        Ok(())
+    }
+
+    /// Use an FFmpeg the user picked; check it first.
+    pub async fn use_system(&self, state: &AppState, path: PathBuf) -> Result<(), AppError> {
+        detect::use_system(&path)
+            .await
+            .map_err(|e| AppError::invalid_input(e.to_string()))?;
+        state.settings.write().ffmpeg_path = Some(path);
+        state.save_settings().await?;
+        self.refresh(state).await;
+        Ok(())
+    }
+
+    /// Go back to the downloaded tools.
+    pub async fn use_downloaded(&self, state: &AppState) -> Result<(), AppError> {
+        state.settings.write().ffmpeg_path = None;
+        state.save_settings().await?;
+        self.refresh(state).await;
+        Ok(())
+    }
+
+    /// The FFmpeg to run now, if any.
+    pub fn ffmpeg(&self) -> Option<Ffmpeg> {
+        self.current
+            .read()
+            .as_ref()
+            .map(|(t, _)| Ffmpeg::new(t.ffmpeg.clone()))
+    }
+
+    /// Whether compression can run now.
+    pub fn ready(&self) -> bool {
+        self.current.read().is_some()
+    }
+}

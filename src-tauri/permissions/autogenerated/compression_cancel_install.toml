@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-compression-cancel-install"
+description = "Enables the compression_cancel_install command without any pre-configured scope."
+commands.allow = ["compression_cancel_install"]
+
+[[permission]]
+identifier = "deny-compression-cancel-install"
+description = "Denies the compression_cancel_install command without any pre-configured scope."
+commands.deny = ["compression_cancel_install"]

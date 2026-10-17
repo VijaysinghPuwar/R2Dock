@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod browse;
+pub mod compression;
 pub mod connections;
 pub mod manage;
 pub mod settings;

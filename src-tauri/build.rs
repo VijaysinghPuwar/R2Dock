@@ -50,6 +50,13 @@ const COMMANDS: &[&str] = &[
     "activity_reset_dir",
     "log_copy_path",
     "activity_export_csv",
+    "compression_status",
+    "compression_install",
+    "compression_cancel_install",
+    "compression_remove",
+    "compression_use_system",
+    "compression_use_downloaded",
+    "compression_preview",
 ];
 
 fn main() {

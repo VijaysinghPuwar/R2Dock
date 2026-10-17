@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-compression-install"
+description = "Enables the compression_install command without any pre-configured scope."
+commands.allow = ["compression_install"]
+
+[[permission]]
+identifier = "deny-compression-install"
+description = "Denies the compression_install command without any pre-configured scope."
+commands.deny = ["compression_install"]

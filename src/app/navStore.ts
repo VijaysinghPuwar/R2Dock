@@ -2,7 +2,15 @@ import { create } from "zustand";
 import { parentPrefix } from "../lib/keys";
 
 export type View = "welcome" | "buckets" | "browser" | "transfers" | "settings" | "recent" | "favorites";
-export type SettingsSection = "connections" | "appearance" | "transfers" | "security" | "notifications" | "advanced" | "about";
+export type SettingsSection =
+  | "connections"
+  | "appearance"
+  | "transfers"
+  | "compression"
+  | "security"
+  | "notifications"
+  | "advanced"
+  | "about";
 
 export interface Location {
   view: View;

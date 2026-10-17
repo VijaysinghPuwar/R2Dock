@@ -42,6 +42,7 @@ export const qk = {
   media: (connectionId: string, bucket: string, key: string) => ["media", connectionId, bucket, key] as const,
   text: (connectionId: string, bucket: string, key: string) => ["text", connectionId, bucket, key] as const,
   history: ["history"] as const,
+  compression: ["compression"] as const,
 };
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -66,6 +67,19 @@ export const DEFAULT_PREFERENCES: Preferences = {
   activityLog: true,
   activityIncludeNames: false,
   activityDays: 14,
+  compression: {
+    enabled: false,
+    audio: {
+      mode: "keepFormat",
+      speech: "kbps32",
+      music: "standard",
+      lossless: "mp3",
+      minSavingPercent: 15,
+      allowDownmix: false,
+    },
+    onFailure: "uploadOriginal",
+    encodeLimit: 1,
+  },
 };
 
 const FALLBACK_INFO: AppInfo = {

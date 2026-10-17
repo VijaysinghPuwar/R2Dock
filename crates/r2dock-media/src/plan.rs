@@ -11,76 +11,11 @@ use ts_rs::TS;
 use crate::classify::{Content, ContentOverride, classify};
 use crate::probe::{AudioCodec, AudioProbe};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub enum Mode {
-    /// MP3 stays MP3 and M4A stays M4A, so keys and links do not change.
-    #[default]
-    KeepFormat,
-    /// Most efficient codecs (Opus); keys change extension.
-    Smallest,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub enum SpeechQuality {
-    #[default]
-    Kbps32,
-    Kbps48,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub enum MusicQuality {
-    /// MP3 VBR quality 4, about 165 kbps.
-    #[default]
-    Standard,
-    /// MP3 VBR quality 6, about 115 kbps.
-    Smaller,
-}
-
-/// What to do with WAV, AIFF, FLAC, and ALAC sources.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub enum LosslessAction {
-    /// Lossy, smallest: MP3 (Opus in Smallest mode).
-    #[default]
-    Mp3,
-    /// Lossless, about half the size of WAV.
-    Flac,
-    Keep,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct AudioSettings {
-    pub mode: Mode,
-    pub speech: SpeechQuality,
-    pub music: MusicQuality,
-    pub lossless: LosslessAction,
-    /// Minimum saving in percent; smaller savings upload the original.
-    pub min_saving_percent: u8,
-    /// Allow 5.1 and other multichannel audio to be mixed down to stereo.
-    pub allow_downmix: bool,
-}
-
-impl Default for AudioSettings {
-    fn default() -> Self {
-        Self {
-            mode: Mode::KeepFormat,
-            speech: SpeechQuality::Kbps32,
-            music: MusicQuality::Standard,
-            lossless: LosslessAction::Mp3,
-            min_saving_percent: 15,
-            allow_downmix: false,
-        }
-    }
-}
+// The settings types live in r2dock-core so they can be stored with the
+// other preferences.
+pub use r2dock_core::compression::{
+    AudioSettings, LosslessAction, Mode, MusicQuality, SpeechQuality,
+};
 
 /// Facts about one upload that are not in the probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

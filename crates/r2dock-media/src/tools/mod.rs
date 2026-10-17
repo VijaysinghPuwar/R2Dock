@@ -45,8 +45,9 @@ pub struct Tools {
     pub source: ToolsSource,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum ToolsSource {
     /// Downloaded and verified by R2Dock.
     Bundled,

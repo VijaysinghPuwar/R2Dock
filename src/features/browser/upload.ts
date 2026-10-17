@@ -36,9 +36,14 @@ export const useUploadStore = create<UploadState>((set) => ({
 }));
 
 /** Start a reviewed or simple plan. */
-export async function startPlan(plan: UploadPlan, target: UploadTarget, policy: ConflictPolicy): Promise<boolean> {
+export async function startPlan(
+  plan: UploadPlan,
+  target: UploadTarget,
+  policy: ConflictPolicy,
+  compress = true,
+): Promise<boolean> {
   try {
-    const jobs = await uploadStart(plan.planId, policy);
+    const jobs = await uploadStart(plan.planId, policy, compress);
     toast.neutral(`Uploading ${plural(jobs, "file")} to ${folderLabel(target.bucket, target.prefix)}.`);
     return true;
   } catch (e) {

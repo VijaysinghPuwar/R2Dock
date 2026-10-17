@@ -25,6 +25,7 @@ const REGISTRY_CAP: usize = 256;
 pub struct Paths {
     pub config: PathBuf,
     pub data: PathBuf,
+    pub cache: PathBuf,
     pub logs: PathBuf,
     pub home: Option<PathBuf>,
     pub downloads: Option<PathBuf>,
@@ -81,6 +82,8 @@ pub struct UploadFile {
     pub key: String,
     pub size: u64,
     pub identity: Option<r2dock_transfer::source::FileIdentity>,
+    /// What compression would do, when it is on (set by the estimate).
+    pub compression: Option<r2dock_media::estimate::FileDecision>,
 }
 
 pub struct PreparedUpload {
@@ -118,6 +121,7 @@ pub struct AppState {
     pub media: MediaRegistry,
     pub credential_store_label: String,
     pub activity: Arc<crate::activity::ActivityLog>,
+    pub compression: crate::compression::CompressionService,
 }
 
 impl AppState {

@@ -208,6 +208,89 @@ pub struct UploadPlan {
     pub needs_review: bool,
     pub too_many: bool,
     pub default_policy: ConflictPolicy,
+    /// Present when compression is on and the upload has audio files.
+    pub compression: Option<CompressionEstimate>,
+}
+
+/// What compression would do to an upload (from file headers only).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CompressionEstimate {
+    /// Audio files that would be compressed.
+    pub files: u32,
+    #[ts(type = "number")]
+    pub bytes_before: u64,
+    #[ts(type = "number")]
+    pub bytes_after: u64,
+    /// Audio files that would be uploaded as they are.
+    pub unchanged: u32,
+    /// Keys whose extension changes (first 50).
+    pub key_changes: Vec<KeyChange>,
+    /// Total number of key changes.
+    pub key_change_count: u32,
+    /// New keys used by more than one file, or already used in this upload.
+    pub collisions: Vec<String>,
+    /// FFmpeg is ready; otherwise files upload unchanged.
+    pub tools_ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct KeyChange {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ToolsState {
+    NotInstalled,
+    Installing,
+    Ready,
+    /// The chosen FFmpeg could not be used (see `problem`).
+    Unusable,
+}
+
+/// Settings > Compression: the tools.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CompressionStatus {
+    pub state: ToolsState,
+    pub source: Option<r2dock_media::tools::ToolsSource>,
+    pub version: Option<String>,
+    pub license: Option<r2dock_media::tools::detect::License>,
+    /// Download size for this system; `None` when no package exists.
+    #[ts(type = "number | null")]
+    pub download_bytes: Option<u64>,
+    /// A picked system FFmpeg, home shown as `~`.
+    pub system_path: Option<String>,
+    pub problem: Option<String>,
+}
+
+/// One "Compare quality" sample, playable through the media scheme.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PreviewSample {
+    pub label: String,
+    #[ts(type = "number")]
+    pub bytes_per_hour: u64,
+    /// Media token; turn it into a URL with `mediaUrl`.
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct InstallProgress {
+    #[ts(type = "number")]
+    pub done: u64,
+    #[ts(type = "number")]
+    pub total: u64,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

@@ -4,6 +4,7 @@
 
 pub mod activity;
 pub mod commands;
+pub mod compression;
 pub mod connections;
 mod dialogs;
 pub mod dragdrop;
@@ -35,6 +36,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let paths = Paths {
         config: resolver.app_config_dir()?,
         data: resolver.app_data_dir()?,
+        cache: resolver.app_cache_dir()?,
         logs: resolver.app_log_dir()?,
         home: resolver.home_dir().ok(),
         downloads: resolver.download_dir().ok(),
@@ -120,6 +122,16 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let trim = engine.clone();
     tauri::async_runtime::spawn_blocking(move || trim.trim_history(history_days));
 
+    let compression = compression::CompressionService::new(
+        paths.data.join("tools"),
+        paths.cache.join("compress"),
+    );
+    // Copies left by a crash, before any encode can start.
+    {
+        let sweep = engine.clone();
+        let work = compression.work_dir.clone();
+        tauri::async_runtime::spawn_blocking(move || sweep.sweep_work_dir(&work));
+    }
     app.manage(AppState {
         paths,
         settings: RwLock::new(settings),
@@ -132,8 +144,15 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         media: media::MediaRegistry::default(),
         credential_store_label,
         activity,
+        compression,
     });
     app.manage(LogHandle(log));
+    // Find and check the compression tools in the background.
+    let handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        let state = handle.state::<AppState>();
+        state.compression.refresh(&state).await;
+    });
 
     #[cfg(not(debug_assertions))]
     if let Some(w) = app.get_webview_window("main") {
@@ -213,6 +232,13 @@ pub fn run() {
         commands::settings::activity_reset_dir,
         commands::settings::log_copy_path,
         commands::settings::activity_export_csv,
+        commands::compression::compression_status,
+        commands::compression::compression_install,
+        commands::compression::compression_cancel_install,
+        commands::compression::compression_remove,
+        commands::compression::compression_use_system,
+        commands::compression::compression_use_downloaded,
+        commands::compression::compression_preview,
     ]);
 
     let app = match builder.build(tauri::generate_context!()) {

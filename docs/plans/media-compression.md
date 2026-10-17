@@ -1,6 +1,6 @@
 # Plan: Compress audio and video before upload
 
-Status: **In progress.** Target release: 0.3.0. Steps 1 to 4 are done (see Progress at the end).
+Status: **In progress.** Target release: 0.3.0. Steps 1 to 5 are done (see Progress at the end).
 
 ## Goal
 
@@ -293,6 +293,7 @@ Changes from the plan made during step 2:
 - Process priority is lowered on Windows (`BELOW_NORMAL_PRIORITY_CLASS`). macOS and Linux run FFmpeg at normal priority; encodes are limited to one at a time by default (step 4).
 | 3 | Done | `tools`: pinned packages per platform (`manifest.rs`), HTTPS download limited to GitHub hosts, SHA-256 of each download checked before unpacking and of each binary after, atomic install, re-hash when size or modification time changes, refusal of replaced, symlinked, or edited files, remove; `detect` reads version, license, and encoders and checks a user-picked FFmpeg. `.github/workflows/tools.yml` published `tools-ffmpeg-9.0.2-1` (pre-release, never "Latest"): BtbN LGPL 9.0 for Windows and Linux (smoke-tested on their own OS), and macOS built from pinned, signature-checked sources by `tools/ffmpeg/build-macos.sh` (LGPL v3, LAME, Opus, VideoToolbox, system libraries only). Each binary is zstd-compressed on its own. CI installs the real package on Windows, macOS, and Linux and compresses a file with it. |
 | 4 | Done | Engine: `Compressing` state that holds no upload slot (separate encode limit, default 1), so files compress while others upload; the compressed copy replaces the original in the upload spec and is kept in the journal across restarts; the original is checked before and after encoding and again before upload (an edited original is compressed again); pause stops the encode and resume starts it again; cancel and dismiss delete the copy; "If compression fails" upload the original or fail the job; object metadata `r2dock-original-size`, `r2dock-original-name`, `r2dock-compression`; activity log rows `compress_started`, `compress_finished`, `compress_skipped`, `compress_failed`. Tests against the local S3 server and a real FFmpeg cover every case. |
+| 5 | Done | Settings > Compression (its own section): switch, tools install with progress and cancel, remove, use system FFmpeg, Compare quality (30 second samples of a chosen file at each setting, played through the media scheme from R2Dock's preview folder), format, speech, music, lossless, minimum saving, failure policy, encodes at once. Upload review: estimate from file headers, per-upload switch, list of extension changes, name collision and missing tools warnings; new keys are included in the conflict check. Transfer rows: "Compressing 42%", "Saved 330 MB (50%)", and the reason a file was not compressed. Details panel: "Compressed: From 660 MB (mp3-32k)". The settings types moved to `r2dock-core::compression` so they are stored with the other preferences. The demo GIF is updated with the 0.3.0 release. |
 
 Changes from the plan made during steps 3 and 4:
 

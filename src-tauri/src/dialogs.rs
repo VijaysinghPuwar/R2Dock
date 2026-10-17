@@ -71,3 +71,35 @@ pub async fn save_csv(app: &AppHandle, file_name: &str) -> Result<Option<PathBuf
         p
     }))
 }
+
+/// Pick an FFmpeg program for "Use FFmpeg from my system".
+pub async fn pick_ffmpeg(app: &AppHandle) -> Result<Option<PathBuf>, AppError> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose the ffmpeg program")
+        .pick_file(move |path| {
+            let _ = tx.send(path);
+        });
+    let picked = rx.await.map_err(|_| closed())?;
+    Ok(picked.and_then(|p| p.into_path().ok()))
+}
+
+/// Pick one audio file for "Compare quality".
+pub async fn pick_audio(app: &AppHandle) -> Result<Option<PathBuf>, AppError> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose an audio file to compare")
+        .add_filter(
+            "Audio",
+            &[
+                "mp3", "m4a", "m4b", "aac", "wav", "aif", "aiff", "flac", "opus",
+            ],
+        )
+        .pick_file(move |path| {
+            let _ = tx.send(path);
+        });
+    let picked = rx.await.map_err(|_| closed())?;
+    Ok(picked.and_then(|p| p.into_path().ok()))
+}

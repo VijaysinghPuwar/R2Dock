@@ -87,8 +87,33 @@ async fn upload_prepare_inner(
         _ => String::new(),
     };
     let bytes = scanned.bytes;
-    let items = upload_items(scanned, &prefix, state.paths.home.as_deref());
-    let keys: Vec<String> = items.files.iter().map(|f| f.key.clone()).collect();
+    let mut items = upload_items(scanned, &prefix, state.paths.home.as_deref());
+    let compression_prefs = state.settings.read().preferences.compression;
+    let estimate = if compression_prefs.enabled {
+        let mut files = std::mem::take(&mut items.files);
+        let ready = state.compression.ready();
+        let (files, estimate) = tokio::task::spawn_blocking(move || {
+            let e =
+                crate::planning::compression_estimate(&mut files, &compression_prefs.audio, ready);
+            (files, e)
+        })
+        .await
+        .map_err(|_| blocking_err())?;
+        items.files = files;
+        estimate
+    } else {
+        None
+    };
+    // Check both the original keys and the keys after compression.
+    let mut keys: Vec<String> = items.files.iter().map(|f| f.key.clone()).collect();
+    keys.extend(items.files.iter().filter_map(|f| match &f.compression {
+        Some(r2dock_media::estimate::FileDecision::Compress { new_key, .. })
+            if *new_key != f.key =>
+        {
+            Some(new_key.clone())
+        }
+        _ => None,
+    }));
     let (b, p) = (bucket.clone(), prefix.clone());
     let conflicts = with_client(state, connection_id, |c| async move {
         count_conflicts(&c, &b, &p, &keys).await
@@ -106,8 +131,12 @@ async fn upload_prepare_inner(
     } else {
         label
     };
-    let needs_review =
-        has_folders || files > 20 || conflicts > 0 || !items.skipped.is_empty() || too_many;
+    let needs_review = has_folders
+        || files > 20
+        || conflicts > 0
+        || !items.skipped.is_empty()
+        || too_many
+        || estimate.is_some();
     let skipped = items.skipped.clone();
     let plan_id = state.uploads.insert(PreparedUpload {
         connection: connection_id,
@@ -128,6 +157,7 @@ async fn upload_prepare_inner(
         needs_review,
         too_many,
         default_policy: default_policy(setting, has_folders),
+        compression: estimate,
     })
 }
 
@@ -135,6 +165,7 @@ async fn upload_start_inner(
     state: &AppState,
     plan_id: String,
     policy: ConflictPolicy,
+    compress: bool,
 ) -> CmdResult<u32> {
     let plan = state
         .uploads
@@ -150,10 +181,29 @@ async fn upload_start_inner(
         })
         .await?;
     }
+    let prefs = state.settings.read().preferences.compression;
+    let request = r2dock_transfer::CompressionRequest {
+        settings: prefs.audio,
+        content: r2dock_media::classify::ContentOverride::Auto,
+        on_failure: prefs.on_failure,
+    };
     let specs: Vec<JobSpec> = plan
         .files
         .into_iter()
         .map(|f| {
+            use r2dock_media::estimate::FileDecision;
+            // Only audio files get a compression request; the engine makes
+            // the final decision. Files the estimate left alone show why.
+            let (compression, compressed) = match f.compression {
+                Some(FileDecision::Compress { .. }) if compress && prefs.enabled => {
+                    (Some(request.clone()), None)
+                }
+                Some(FileDecision::Unchanged(reason)) if compress && prefs.enabled => (
+                    Some(request.clone()),
+                    Some(r2dock_transfer::CompressionResult::Unchanged { reason }),
+                ),
+                _ => (None, None),
+            };
             JobSpec::Upload(UploadSpec {
                 connection: plan.connection,
                 bucket: plan.bucket.clone(),
@@ -162,8 +212,8 @@ async fn upload_start_inner(
                 size: f.size,
                 policy,
                 identity: f.identity,
-                compression: None,
-                compressed: None,
+                compression,
+                compressed,
             })
         })
         .collect();
@@ -308,12 +358,16 @@ pub async fn upload_start(
     state: State<'_, AppState>,
     plan_id: String,
     policy: ConflictPolicy,
+    compress: Option<bool>,
 ) -> CmdResult<u32> {
+    // `compress` is the review dialog's switch; it defaults to on.
+    let compress = compress.unwrap_or(true);
     let mut act = state
         .activity
         .start_action("upload_start")
-        .field("policy", format!("{policy:?}"));
-    let result = upload_start_inner(&state, plan_id, policy).await;
+        .field("policy", format!("{policy:?}"))
+        .field("compress", compress);
+    let result = upload_start_inner(&state, plan_id, policy, compress).await;
     if let Ok(n) = &result {
         act.set("files", *n);
     }

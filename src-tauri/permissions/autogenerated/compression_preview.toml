@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-compression-preview"
+description = "Enables the compression_preview command without any pre-configured scope."
+commands.allow = ["compression_preview"]
+
+[[permission]]
+identifier = "deny-compression-preview"
+description = "Denies the compression_preview command without any pre-configured scope."
+commands.deny = ["compression_preview"]

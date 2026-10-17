@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use super::{Tools, ToolsError, ToolsSource};
 
 /// License of an FFmpeg build, from its configure flags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum License {
     LgplV21,
     LgplV3,

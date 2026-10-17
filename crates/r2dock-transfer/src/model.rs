@@ -90,15 +90,7 @@ impl UploadSpec {
     }
 }
 
-/// What to do when compression fails.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub enum CompressionFailure {
-    #[default]
-    UploadOriginal,
-    SkipFile,
-}
+pub use r2dock_core::compression::CompressionFailure;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

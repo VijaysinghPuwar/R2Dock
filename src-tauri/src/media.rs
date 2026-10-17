@@ -3,6 +3,8 @@
 //! The webview gets an opaque, expiring token, never a presigned URL or a
 //! credential. Rust fetches from R2 with Range support and returns only
 //! allowlisted content types; everything else is served as an octet stream.
+//! Local targets are only the compression preview samples Rust wrote into
+//! its own preview folder; the webview never supplies a path.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -20,10 +22,15 @@ pub const RANGE_CHUNK: u64 = 2 * 1024 * 1024;
 pub const MAX_WHOLE: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
-pub struct MediaTarget {
-    pub connection: Uuid,
-    pub bucket: String,
-    pub key: String,
+pub enum MediaTarget {
+    /// An object in R2.
+    R2 {
+        connection: Uuid,
+        bucket: String,
+        key: String,
+    },
+    /// A preview sample in R2Dock's preview folder.
+    Local { path: std::path::PathBuf },
 }
 
 #[derive(Default)]
@@ -154,6 +161,42 @@ pub fn media_response(
     r
 }
 
+struct R2Target {
+    bucket: String,
+    key: String,
+}
+
+/// Serve a preview sample from disk (small files), with Range support.
+fn serve_local(path: &std::path::Path, range: Option<&str>) -> Response<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return error_response(StatusCode::NOT_FOUND);
+    };
+    let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let name = path.to_string_lossy();
+    let content_type = content_type_for(&name);
+    let (start, end, status) = match parse_range(range, Some(size)) {
+        Some((s, _)) if size == 0 || s >= size => {
+            let mut r = error_response(StatusCode::RANGE_NOT_SATISFIABLE);
+            if let Ok(v) = HeaderValue::from_str(&format!("bytes */{size}")) {
+                r.headers_mut().insert(header::CONTENT_RANGE, v);
+            }
+            return r;
+        }
+        Some((s, e)) => (s, e, StatusCode::PARTIAL_CONTENT),
+        None if size <= MAX_WHOLE => (0, size.saturating_sub(1), StatusCode::OK),
+        None => (0, RANGE_CHUNK.min(size) - 1, StatusCode::PARTIAL_CONTENT),
+    };
+    let len = if size == 0 { 0 } else { end - start + 1 };
+    let mut body = vec![0u8; usize::try_from(len).unwrap_or(0)];
+    if file.seek(SeekFrom::Start(start)).is_err() || file.read_exact(&mut body).is_err() {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    let content_range =
+        (status == StatusCode::PARTIAL_CONTENT).then(|| format!("bytes {start}-{end}/{size}"));
+    media_response(status, content_type, body, content_range)
+}
+
 /// Serve one request for the media scheme.
 pub async fn serve(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> Response<Vec<u8>> {
     use r2dock_r2::R2Error;
@@ -168,7 +211,27 @@ pub async fn serve(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> R
     let Some(target) = state.media.resolve(token) else {
         return error_response(StatusCode::NOT_FOUND);
     };
-    let Ok(client) = state.connections.client(target.connection).await else {
+    let range_header = request
+        .headers()
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let (connection, bucket, key) = match target {
+        MediaTarget::Local { path } => {
+            return tokio::task::spawn_blocking(move || {
+                serve_local(&path, range_header.as_deref())
+            })
+            .await
+            .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR));
+        }
+        MediaTarget::R2 {
+            connection,
+            bucket,
+            key,
+        } => (connection, bucket, key),
+    };
+    let target = R2Target { bucket, key };
+    let Ok(client) = state.connections.client(connection).await else {
         return error_response(StatusCode::BAD_GATEWAY);
     };
     let size = match client.head_object(&target.bucket, &target.key).await {
@@ -177,11 +240,7 @@ pub async fn serve(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> R
         Err(_) => return error_response(StatusCode::BAD_GATEWAY),
     };
     let content_type = content_type_for(&target.key);
-    let range_header = request
-        .headers()
-        .get(header::RANGE)
-        .and_then(|v| v.to_str().ok());
-    let range = parse_range(range_header, Some(size)).or_else(|| {
+    let range = parse_range(range_header.as_deref(), Some(size)).or_else(|| {
         // Large objects are always served in chunks.
         (size > MAX_WHOLE).then_some((0, RANGE_CHUNK.min(size) - 1))
     });
@@ -275,13 +334,36 @@ mod tests {
     #[test]
     fn registry_tokens() {
         let r = MediaRegistry::default();
-        let t = r.issue(MediaTarget {
+        let t = r.issue(MediaTarget::R2 {
             connection: Uuid::nil(),
             bucket: "b".into(),
             key: "k".into(),
         });
-        assert_eq!(r.resolve(&t).unwrap().key, "k");
+        assert!(matches!(r.resolve(&t), Some(MediaTarget::R2 { key, .. }) if key == "k"));
         assert!(r.resolve("0123456789abcdef0123456789abcdef").is_none());
+    }
+
+    #[test]
+    fn local_samples_are_served_with_ranges() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("sample.mp3");
+        std::fs::write(&p, (0u8..100).collect::<Vec<_>>()).unwrap();
+        let whole = serve_local(&p, None);
+        assert_eq!(whole.status(), StatusCode::OK);
+        assert_eq!(whole.body().len(), 100);
+        assert_eq!(whole.headers()[header::CONTENT_TYPE], "audio/mpeg");
+        let part = serve_local(&p, Some("bytes=10-19"));
+        assert_eq!(part.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(part.body(), &(10u8..20).collect::<Vec<_>>());
+        assert_eq!(part.headers()[header::CONTENT_RANGE], "bytes 10-19/100");
+        assert_eq!(
+            serve_local(&p, Some("bytes=200-")).status(),
+            StatusCode::RANGE_NOT_SATISFIABLE
+        );
+        assert_eq!(
+            serve_local(&dir.path().join("gone.mp3"), None).status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[test]

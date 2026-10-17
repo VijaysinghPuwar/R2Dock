@@ -43,6 +43,7 @@ pub fn apply(state: &AppState, log: Option<&crate::logging::ReloadHandle>) {
         p.activity_include_names,
         state.activity_dir(),
     );
+    state.compression.apply(state);
 }
 
 /// Names of the preferences that differ, for the activity log.

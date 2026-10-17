@@ -23,6 +23,7 @@ const plan: UploadPlan = {
   needsReview: true,
   tooMany: false,
   defaultPolicy: "skip",
+  compression: null,
 };
 
 function open(p: UploadPlan = plan) {
@@ -58,7 +59,7 @@ describe("UploadReviewDialog", () => {
     open();
     await user.click(screen.getByRole("radio", { name: /Keep both/ }));
     await user.click(screen.getByRole("button", { name: "Upload" }));
-    await waitFor(() => expect(commands.uploadStart).toHaveBeenCalledWith("plan-1", "keepBoth"));
+    await waitFor(() => expect(commands.uploadStart).toHaveBeenCalledWith("plan-1", "keepBoth", true));
     await waitFor(() => expect(useUploadStore.getState().review).toBeNull());
   });
 
@@ -71,7 +72,7 @@ describe("UploadReviewDialog", () => {
     await user.click(screen.getByRole("button", { name: "Show list" }));
     expect(screen.getByText("~/Desktop/link")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Upload" }));
-    await waitFor(() => expect(commands.uploadStart).toHaveBeenCalledWith("plan-1", "ask"));
+    await waitFor(() => expect(commands.uploadStart).toHaveBeenCalledWith("plan-1", "ask", true));
   });
 
   it("keeps the dialog open when starting fails", async () => {
@@ -82,5 +83,50 @@ describe("UploadReviewDialog", () => {
     await user.click(screen.getByRole("button", { name: "Upload" }));
     await waitFor(() => expect(commands.uploadStart).toHaveBeenCalled());
     expect(useUploadStore.getState().review).not.toBeNull();
+  });
+
+  it("shows the compression estimate and passes the switch", async () => {
+    const user = userEvent.setup();
+    commands.uploadStart.mockResolvedValue(3);
+    renderWithProviders(<UploadReviewDialog />);
+    open({
+      ...plan,
+      compression: {
+        files: 195,
+        bytesBefore: 2_400_000_000,
+        bytesAfter: 1_200_000_000,
+        unchanged: 2,
+        keyChanges: [{ from: "raw/Take 1.wav", to: "raw/Take 1.mp3" }],
+        keyChangeCount: 1,
+        collisions: [],
+        toolsReady: true,
+      },
+    });
+    const sw = await screen.findByRole("switch", { name: /Compress audio before upload/ });
+    expect(screen.getByText(/195 audio files\. Estimated 2\.4 GB to 1\.2 GB\./)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "1 file gets a new extension" }));
+    expect(screen.getByText("raw/Take 1.mp3")).toBeInTheDocument();
+    await user.click(sw);
+    await user.click(screen.getByRole("button", { name: "Upload" }));
+    await waitFor(() => expect(commands.uploadStart).toHaveBeenCalledWith("plan-1", "skip", false));
+  });
+
+  it("warns when the compression tools are missing", async () => {
+    renderWithProviders(<UploadReviewDialog />);
+    open({
+      ...plan,
+      compression: {
+        files: 1,
+        bytesBefore: 10,
+        bytesAfter: 5,
+        unchanged: 0,
+        keyChanges: [],
+        keyChangeCount: 0,
+        collisions: ["a.mp3"],
+        toolsReady: false,
+      },
+    });
+    expect(await screen.findByText(/Compression tools are not installed/)).toBeInTheDocument();
+    expect(screen.getByText(/used by more than one file/)).toBeInTheDocument();
   });
 });

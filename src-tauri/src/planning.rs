@@ -23,6 +23,83 @@ pub struct UploadItems {
     pub skipped: Vec<SkippedItem>,
 }
 
+/// Most key changes listed in the review dialog.
+const KEY_CHANGES_SHOWN: usize = 50;
+
+/// Decide compression for every file of an upload and sum it up for the
+/// review dialog. Reads file headers only. Blocking.
+pub fn compression_estimate(
+    files: &mut [crate::state::UploadFile],
+    settings: &r2dock_core::compression::AudioSettings,
+    tools_ready: bool,
+) -> Option<crate::dto::CompressionEstimate> {
+    use r2dock_media::classify::ContentOverride;
+    use r2dock_media::estimate::{FileDecision, decide_file};
+    use std::collections::HashMap;
+
+    let mut est = crate::dto::CompressionEstimate {
+        files: 0,
+        bytes_before: 0,
+        bytes_after: 0,
+        unchanged: 0,
+        key_changes: Vec::new(),
+        key_change_count: 0,
+        collisions: Vec::new(),
+        tools_ready,
+    };
+    let mut audio = 0u32;
+    for f in files.iter_mut() {
+        let decision = decide_file(&f.local, &f.key, settings, ContentOverride::Auto);
+        match &decision {
+            FileDecision::Compress {
+                estimated_size,
+                new_key,
+            } => {
+                audio += 1;
+                est.files += 1;
+                est.bytes_before += f.size;
+                est.bytes_after += (*estimated_size).min(f.size);
+                if *new_key != f.key {
+                    est.key_change_count += 1;
+                    if est.key_changes.len() < KEY_CHANGES_SHOWN {
+                        est.key_changes.push(crate::dto::KeyChange {
+                            from: f.key.clone(),
+                            to: new_key.clone(),
+                        });
+                    }
+                }
+            }
+            FileDecision::Unchanged(_) => {
+                audio += 1;
+                est.unchanged += 1;
+            }
+            FileDecision::NotAudio => {}
+        }
+        f.compression = Some(decision);
+    }
+    if audio == 0 {
+        return None;
+    }
+    // Two files that end up under the same key (`a.wav` and `a.mp3`).
+    let mut seen: HashMap<String, u32> = HashMap::new();
+    for f in files.iter() {
+        let key = match &f.compression {
+            Some(FileDecision::Compress { new_key, .. }) => new_key.clone(),
+            _ => f.key.clone(),
+        };
+        *seen.entry(key).or_default() += 1;
+    }
+    let mut collisions: Vec<String> = seen
+        .into_iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|(k, _)| k)
+        .collect();
+    collisions.sort();
+    collisions.truncate(KEY_CHANGES_SHOWN);
+    est.collisions = collisions;
+    Some(est)
+}
+
 /// Build destination keys under `prefix`. Names R2 cannot store are skipped.
 pub fn upload_items(scan: Scan, prefix: &str, home: Option<&Path>) -> UploadItems {
     let mut skipped = scan.skipped;
@@ -34,6 +111,7 @@ pub fn upload_items(scan: Scan, prefix: &str, home: Option<&Path>) -> UploadItem
                 key,
                 size: f.size,
                 identity: f.identity,
+                compression: None,
             }),
             None => skipped.push(SkippedItem {
                 path: r2dock_core::redact::redact_path(&f.local, home),
@@ -167,6 +245,82 @@ pub fn download_items(
 
 #[cfg(test)]
 mod tests {
+
+    fn wav(path: &std::path::Path, secs: u32) {
+        let rate = 44_100u32;
+        let data_len = rate * 4 * secs;
+        let mut v = Vec::new();
+        v.extend_from_slice(b"RIFF");
+        v.extend_from_slice(&(36 + data_len).to_le_bytes());
+        v.extend_from_slice(b"WAVEfmt ");
+        v.extend_from_slice(&16u32.to_le_bytes());
+        v.extend_from_slice(&1u16.to_le_bytes());
+        v.extend_from_slice(&2u16.to_le_bytes());
+        v.extend_from_slice(&rate.to_le_bytes());
+        v.extend_from_slice(&(rate * 4).to_le_bytes());
+        v.extend_from_slice(&4u16.to_le_bytes());
+        v.extend_from_slice(&16u16.to_le_bytes());
+        v.extend_from_slice(b"data");
+        v.extend_from_slice(&data_len.to_le_bytes());
+        v.resize(v.len() + data_len as usize, 0);
+        std::fs::write(path, v).unwrap();
+    }
+
+    fn file(local: std::path::PathBuf, key: &str) -> crate::state::UploadFile {
+        let size = std::fs::metadata(&local).unwrap().len();
+        crate::state::UploadFile {
+            local,
+            key: key.into(),
+            size,
+            identity: None,
+            compression: None,
+        }
+    }
+
+    #[test]
+    fn compression_estimate_counts_and_collisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        wav(&d.join("a.wav"), 20);
+        wav(&d.join("b.wav"), 20);
+        std::fs::write(d.join("a.mp3"), b"not really audio").unwrap();
+        std::fs::write(d.join("photo.jpg"), vec![0u8; 100]).unwrap();
+        let mut files = vec![
+            file(d.join("a.wav"), "x/a.wav"),
+            file(d.join("b.wav"), "x/b.wav"),
+            file(d.join("a.mp3"), "x/a.mp3"),
+            file(d.join("photo.jpg"), "x/photo.jpg"),
+        ];
+        let est = super::compression_estimate(
+            &mut files,
+            &r2dock_core::compression::AudioSettings::default(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(est.files, 2);
+        assert_eq!(est.unchanged, 0);
+        assert!(est.bytes_after < est.bytes_before / 5);
+        assert_eq!(est.key_change_count, 2);
+        assert_eq!(est.key_changes[0].to, "x/a.mp3");
+        assert_eq!(
+            est.collisions,
+            vec!["x/a.mp3".to_string()],
+            "a.wav becomes a.mp3"
+        );
+        assert!(est.tools_ready);
+
+        let mut photos = vec![file(d.join("photo.jpg"), "photo.jpg")];
+        assert!(
+            super::compression_estimate(
+                &mut photos,
+                &r2dock_core::compression::AudioSettings::default(),
+                true
+            )
+            .is_none(),
+            "no audio, no estimate"
+        );
+    }
+
     use super::*;
 
     fn o(key: &str) -> ObjectRef {

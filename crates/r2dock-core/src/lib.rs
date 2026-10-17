@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod app_error;
+pub mod compression;
 pub mod connections;
 pub mod etag;
 pub mod keys;

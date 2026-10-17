@@ -58,6 +58,13 @@
     "allow-activity-note",
     "allow-activity-reset-dir",
     "allow-log-copy-path",
-    "allow-activity-export-csv"
+    "allow-activity-export-csv",
+    "allow-compression-status",
+    "allow-compression-install",
+    "allow-compression-cancel-install",
+    "allow-compression-remove",
+    "allow-compression-use-system",
+    "allow-compression-use-downloaded",
+    "allow-compression-preview"
   ]
 }

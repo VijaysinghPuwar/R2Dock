@@ -304,7 +304,7 @@ fn media_token_inner(
     let bucket = bucket_arg(&bucket)?;
     let key = key_arg(&key)?;
     state.connections.get(connection_id)?;
-    Ok(state.media.issue(MediaTarget {
+    Ok(state.media.issue(MediaTarget::R2 {
         connection: connection_id,
         bucket,
         key,

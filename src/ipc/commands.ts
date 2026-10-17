@@ -6,6 +6,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AppError } from "./bindings/AppError";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { BucketEntry } from "./bindings/BucketEntry";
+import type { CompressionStatus } from "./bindings/CompressionStatus";
 import type { ConflictPolicy } from "./bindings/ConflictPolicy";
 import type { ConnectionInput } from "./bindings/ConnectionInput";
 import type { ConnectionSummary } from "./bindings/ConnectionSummary";
@@ -14,6 +15,8 @@ import type { DeleteResult } from "./bindings/DeleteResult";
 import type { DownloadStarted } from "./bindings/DownloadStarted";
 import type { ExportRange } from "./bindings/ExportRange";
 import type { HistoryEntry } from "./bindings/HistoryEntry";
+import type { InstallProgress } from "./bindings/InstallProgress";
+import type { PreviewSample } from "./bindings/PreviewSample";
 import type { JobAction } from "./bindings/JobAction";
 import type { ListPage } from "./bindings/ListPage";
 import type { LogKind } from "./bindings/LogKind";
@@ -113,8 +116,9 @@ export const pickUploadFiles = () => invoke<Selection | null>("pick_upload_files
 export const pickUploadFolder = () => invoke<Selection | null>("pick_upload_folder");
 export const uploadPrepare = (selectionId: string, connectionId: string, bucket: string, prefix: string) =>
   invoke<UploadPlan>("upload_prepare", { selectionId, connectionId, bucket, prefix });
-export const uploadStart = (planId: string, policy: ConflictPolicy) =>
-  invoke<number>("upload_start", { planId, policy });
+/** `compress` is the review dialog's compression switch. */
+export const uploadStart = (planId: string, policy: ConflictPolicy, compress = true) =>
+  invoke<number>("upload_start", { planId, policy, compress });
 /** Returns null when the user cancels the folder picker. */
 export const downloadStart = (connectionId: string, bucket: string, keys: string[], prefixes: string[]) =>
   invoke<DownloadStarted | null>("download_start", { connectionId, bucket, keys, prefixes });
@@ -149,6 +153,21 @@ export const activityExportCsv = (range: ExportRange) => invoke<number | null>("
 /** Record a problem seen by the interface in the activity log (best effort, never throws). */
 export const activityNote = (kind: string, message: string) =>
   invoke<void>("activity_note", { kind, message }).catch(() => undefined);
+
+// Compression tools
+export const compressionStatus = () => invoke<CompressionStatus>("compression_status");
+export const compressionInstall = (onProgress: (p: InstallProgress) => void) => {
+  const channel = new Channel<InstallProgress>();
+  channel.onmessage = onProgress;
+  return invoke<CompressionStatus>("compression_install", { onProgress: channel });
+};
+export const compressionCancelInstall = () => invoke<void>("compression_cancel_install");
+export const compressionRemove = () => invoke<CompressionStatus>("compression_remove");
+/** Opens the file picker; returns null when cancelled. */
+export const compressionUseSystem = () => invoke<CompressionStatus | null>("compression_use_system");
+export const compressionUseDownloaded = () => invoke<CompressionStatus>("compression_use_downloaded");
+/** Opens the file picker, then encodes 30 second samples. Null when cancelled. */
+export const compressionPreview = () => invoke<PreviewSample[] | null>("compression_preview");
 
 // System
 export const clipboardWrite = (text: string) => invoke<void>("clipboard_write", { text });

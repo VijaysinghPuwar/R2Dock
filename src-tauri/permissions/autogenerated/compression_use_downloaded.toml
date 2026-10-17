@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-compression-use-downloaded"
+description = "Enables the compression_use_downloaded command without any pre-configured scope."
+commands.allow = ["compression_use_downloaded"]
+
+[[permission]]
+identifier = "deny-compression-use-downloaded"
+description = "Denies the compression_use_downloaded command without any pre-configured scope."
+commands.deny = ["compression_use_downloaded"]

@@ -4126,6 +4126,7 @@ dependencies = [
  "fs4",
  "hex",
  "process-wrap",
+ "r2dock-core",
  "reqwest",
  "serde",
  "serde_json",

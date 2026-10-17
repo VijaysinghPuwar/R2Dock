@@ -548,3 +548,13 @@ button.crumb:hover {
 .breadcrumb li:last-child {
   flex-shrink: 0;
 }
+
+.review-compression {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: var(--border-w) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}

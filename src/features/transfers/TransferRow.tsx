@@ -18,6 +18,7 @@ import {
 } from "../../lib/format";
 import { parentPrefix, visibleText } from "../../lib/keys";
 import { control, controlMany, run } from "./actions";
+import { compressionLine } from "./compressionText";
 import { groupText } from "./groups";
 import { isTerminal } from "./stats";
 import "./transfers.css";
@@ -103,11 +104,7 @@ function statusParts(job: JobSnapshot): { text: string; aria: string } {
       const secs = durationSecs(job);
       push(job.direction === "upload" ? "Uploaded" : "Downloaded");
       push(formatBytes(job.totalBytes));
-      if (job.compression?.kind === "saved" && job.compression.originalBytes > 0) {
-        const saved = job.compression.originalBytes - job.compression.bytes;
-        const percent = Math.round((saved / job.compression.originalBytes) * 100);
-        push(`Saved ${formatBytes(saved)} (${percent}%)`);
-      }
+      push(compressionLine(job.compression));
       if (secs !== null) {
         push(formatDuration(secs));
         if (secs > 0) push(`${formatSpeed(job.totalBytes / secs)} average`);

@@ -73,6 +73,34 @@
   font-weight: 600;
 }
 
+.tools-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+}
+
+.preview-samples {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.preview-sample {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.preview-sample audio {
+  height: var(--control-h);
+  max-width: 100%;
+}
+
 .log-location {
   display: flex;
   flex-direction: column;

@@ -614,6 +614,7 @@ Dialog title: "Upload 214 items"
 - Summary: "2 folders, 212 files, 3.4 GB"
 - Conflicts section (if any): "4 files already exist in this folder." Options (radio): **Ask for each**, **Replace existing**, **Skip existing**, **Keep both** (adds " (1)" before the extension). Default: Skip existing for folder uploads, Ask for each for individual files.
 - Skipped items notice (if any): "3 items will be skipped: 2 shortcuts (symbolic links) and 1 file with a name R2 cannot store." Expandable list.
+- Compression box (when compression is on and the upload has audio files; the review dialog is then always shown): switch "Compress audio before upload" (on), description "195 audio files. Estimated 2.4 GB to 1.2 GB." plus "N other audio files already small, uploaded as is." when some stay unchanged. Disclosure "12 files get a new extension" lists "raw/Take 1.wav becomes raw/Take 1.mp3". Warnings: "Compression tools are not installed, so files upload unchanged." with a link to Compression settings, and "One name is used by more than one file after compression (a.mp3). The choice for existing files decides what happens." When nothing would shrink: "The audio files here are already small and upload as they are."
 - Actions: Cancel, **Upload**.
 
 Step 3, progress:
@@ -666,7 +667,9 @@ Transfer row (`TransferRow`), 56 px tall:
 
 **Completed tab**: rows show final size, duration, average speed, and "Show in folder" (downloads) or "Show in bucket" (uploads). History is kept locally for 30 days or 1,000 entries by default.
 
-**Failed tab**: each row shows a plain-language reason and a primary "Retry" action, plus "Details" with error code. Bulk "Retry all".
+**Failed tab**: each row shows a plain-language reason and a primary "Retry" action, plus "Details" with error code and an "Open activity log" link. Bulk "Retry all".
+
+**Compression in rows**: while compressing, the status reads "Compressing 42%" (Pause stops the encode; Resume starts it again). A finished upload adds "Saved 330 MB (50%)", or "Not compressed: Already compressed (48 kbps)", "Not compressed: Would save only 6%", "Not compressed: Compression tools are not installed", or "Compression failed; uploaded the original". Non-audio files show nothing about compression.
 
 ### Screen 6: File Preview and Details (`PreviewModal`, `DetailsPanel`)
 
@@ -687,6 +690,8 @@ Supported previews (prototype should show each):
 | Audio (mp3, m4a, ogg, wav, flac where supported by the system) | Compact player: play/pause, scrubber, time, volume. Streams from R2 without downloading the whole file first |
 | Video | P2 for the prototype. Same streaming principle as audio. Shown as "Preview not available yet" in the MVP |
 | Other (zip, exe, pdf in MVP) | Large file-type icon, "No preview for this file type", Download button |
+
+Details panel: objects R2Dock compressed show a "Compressed" row, "From 660 MB (mp3-32k)", read from the object metadata `r2dock-original-size` and `r2dock-compression`.
 
 Never show "Open in browser" unless a public URL is configured. Do not assume objects are public.
 
@@ -714,6 +719,14 @@ Layout: left sub-navigation (200 px) and content area (max 720 px). Sections and
 - When a file already exists: Ask (default), Skip, Replace, Keep both.
 - Keep transfer history: 30 days (default).
 - Advanced (collapsed): Upload in parts for files larger than [100] MB; bandwidth limit (off by default, later release).
+
+**Compression** (its own section, after Transfers)
+- Switch "Compress audio before upload": Off (default). Helper: "Makes MP3, M4A, WAV, and FLAC files smaller on your computer before they upload. Your original files are never changed, and files that would not get smaller upload as they are."
+- Tools block (`bg.inset`): not installed: "Compression tools are not installed (17.5 MB download)." with **Install compression tools** and "Use FFmpeg from my system..."; installing: "Downloading compression tools: 8.0 MB of 17.5 MB", progress bar, Cancel; ready: "FFmpeg 9.0.2 (LGPL 3), downloaded and checked by R2Dock." with Remove tools, or "from your system" with the path and "Use downloaded tools"; unusable: warning banner "The chosen FFmpeg cannot be used: ...".
+- Compare quality: "Choose a file..." encodes 30 seconds at each setting and lists them with an audio player and "about 14.4 MB per hour".
+- Format: Keep format (default) or Smallest (helper changes to "Speech becomes Opus (.opus); file names change.").
+- Speech quality: 32 kbps (default) or 48 kbps. Music quality: Standard (default) or Smaller. WAV and other lossless audio: MP3 (default; Opus in Smallest), FLAC (lossless), Keep.
+- Minimum saving: 15% (5 to 50). If compression fails: Upload the original (default) or Skip the file. Files compressed at the same time: 1 (default) to 4.
 
 **Security**
 - "Credentials are stored in: macOS Keychain" (or "Windows Credential Manager", "Secret Service (GNOME Keyring or KWallet)").

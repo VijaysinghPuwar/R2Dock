@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-compression-use-system"
+description = "Enables the compression_use_system command without any pre-configured scope."
+commands.allow = ["compression_use_system"]
+
+[[permission]]
+identifier = "deny-compression-use-system"
+description = "Denies the compression_use_system command without any pre-configured scope."
+commands.deny = ["compression_use_system"]

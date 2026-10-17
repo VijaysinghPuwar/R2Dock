@@ -84,6 +84,8 @@ pub struct Preferences {
     pub activity_include_names: bool,
     /// Days to keep activity log files.
     pub activity_days: u32,
+    /// Compress audio before upload.
+    pub compression: crate::compression::CompressionPrefs,
 }
 
 impl Default for Preferences {
@@ -110,6 +112,7 @@ impl Default for Preferences {
             activity_log: true,
             activity_include_names: false,
             activity_days: 14,
+            compression: crate::compression::CompressionPrefs::default(),
         }
     }
 }
@@ -122,6 +125,7 @@ impl Preferences {
         self.multipart_threshold_mib = self.multipart_threshold_mib.clamp(16, 4096);
         self.typed_confirm_threshold = self.typed_confirm_threshold.clamp(1, 10_000);
         self.activity_days = self.activity_days.clamp(1, 365);
+        self.compression = self.compression.sanitized();
         self
     }
 }
@@ -138,6 +142,9 @@ pub struct SettingsFile {
     /// Activity log folder chosen with the folder picker. `None` means the
     /// `activity` folder inside the app's log folder.
     pub activity_dir: Option<std::path::PathBuf>,
+    /// An FFmpeg the user picked with the file picker ("Use FFmpeg from my
+    /// system"). `None` means the tools R2Dock downloads.
+    pub ffmpeg_path: Option<std::path::PathBuf>,
 }
 
 impl Default for SettingsFile {
@@ -147,6 +154,7 @@ impl Default for SettingsFile {
             preferences: Preferences::default(),
             download_dir: None,
             activity_dir: None,
+            ffmpeg_path: None,
         }
     }
 }

@@ -1,4 +1,5 @@
 import { useNavStore, type SettingsSection } from "../../app/navStore";
+import { CompressionSection } from "./CompressionSection";
 import { ConnectionsSection } from "./ConnectionsSection";
 import {
   AboutSection,
@@ -14,6 +15,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: "connections", label: "Connections" },
   { id: "appearance", label: "Appearance" },
   { id: "transfers", label: "Transfers" },
+  { id: "compression", label: "Compression" },
   { id: "security", label: "Security" },
   { id: "notifications", label: "Notifications" },
   { id: "advanced", label: "Advanced" },
@@ -28,6 +30,8 @@ function SectionBody({ section }: { section: SettingsSection }) {
       return <AppearanceSection />;
     case "transfers":
       return <TransfersSection />;
+    case "compression":
+      return <CompressionSection />;
     case "security":
       return <SecuritySection />;
     case "notifications":

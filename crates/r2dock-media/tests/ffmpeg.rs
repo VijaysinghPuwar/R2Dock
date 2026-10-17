@@ -722,3 +722,52 @@ mod pipeline {
         assert_eq!(out.channels, Some(1), "identical channels stored once");
     }
 }
+
+#[tokio::test]
+async fn compare_quality_samples() {
+    let Some(bin) = ffmpeg_bin() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("talk.mp3");
+    let long = SPEECH.replace("d=150", "d=200");
+    make(
+        &bin,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            &long,
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "64k",
+            "-ac",
+            "1",
+            s(&input),
+        ],
+    );
+    let out = dir.path().join("preview");
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(out.join("old.mp3"), b"stale").unwrap();
+    let samples =
+        r2dock_media::preview::compare(&Ffmpeg::new(bin), &input, &out, &CancellationToken::new())
+            .await
+            .unwrap();
+    let labels: Vec<&str> = samples.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        [
+            "Original",
+            "Speech 32 kbps (MP3)",
+            "Speech 48 kbps (MP3)",
+            "Smallest (Opus 24 kbps)"
+        ]
+    );
+    for s in &samples {
+        assert!(s.path.is_file(), "{:?}", s.path);
+        assert!(s.bytes_per_hour > 0);
+    }
+    // About 14 MB per hour at 32 kbps.
+    let mp3 = samples[1].bytes_per_hour as f64 / 1e6;
+    assert!((12.0..17.0).contains(&mp3), "{mp3}");
+    assert!(!out.join("old.mp3").exists(), "old samples removed");
+}

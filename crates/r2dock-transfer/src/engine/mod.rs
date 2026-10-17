@@ -213,14 +213,19 @@ impl Engine {
 
     /// Set the FFmpeg and work folder used for compression (`None` when the
     /// tools are not installed: uploads that ask for compression then go
-    /// ahead with the original). Deletes leftover copies no job refers to.
+    /// ahead with the original). Safe to call again when settings change.
     pub fn set_media(&self, media: Option<MediaRuntime>) {
         if let Some(m) = &media {
             let _ = std::fs::create_dir_all(&m.work_dir);
-            self.inner.sweep_work_dir(&m.work_dir);
         }
         *self.inner.media.write() = media;
         self.inner.wake.notify_one();
+    }
+
+    /// Delete files in the compression work folder that no job refers to
+    /// (left by a crash). Call once at startup, before any encode. Blocking.
+    pub fn sweep_work_dir(&self, work_dir: &std::path::Path) {
+        self.inner.sweep_work_dir(work_dir);
     }
 
     /// Receive compression milestones (for the activity log).
