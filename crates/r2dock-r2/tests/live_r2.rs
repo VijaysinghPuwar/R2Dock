@@ -64,5 +64,8 @@ async fn live_read_only_connection_check() {
     });
     let err = bad.list_page(&bucket, "", None, Some(1)).await.unwrap_err();
     eprintln!("wrong secret gives: {err:?}");
-    assert!(err.is_auth_failure(), "wrong secret should be an auth failure, got {err:?}");
+    assert!(
+        err.is_auth_failure(),
+        "wrong secret should be an auth failure, got {err:?}"
+    );
 }
