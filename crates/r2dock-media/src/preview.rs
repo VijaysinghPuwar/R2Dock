@@ -146,12 +146,19 @@ pub async fn compare(
         let a = args::encode_audio(input, &out, &target, Some(window))?;
         crate::ffmpeg::run::run(&ff.bin, &a, cancel, ff.options, |_| {}).await?;
         let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+        // The original plays from a lossless copy, but its size is the real
+        // file's, so the comparison is honest.
+        let (bytes, secs) = if i == 0 {
+            (probe.size, duration)
+        } else {
+            (size, window.len_secs)
+        };
         #[allow(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
             clippy::cast_precision_loss
         )]
-        let per_hour = (size as f64 * 3600.0 / window.len_secs.max(0.1)) as u64;
+        let per_hour = (bytes as f64 * 3600.0 / secs.max(0.1)) as u64;
         samples.push(Sample {
             label,
             path: out,

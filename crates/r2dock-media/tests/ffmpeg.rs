@@ -766,6 +766,9 @@ async fn compare_quality_samples() {
         assert!(s.path.is_file(), "{:?}", s.path);
         assert!(s.bytes_per_hour > 0);
     }
+    // The original's real size: about 29 MB per hour at 64 kbps.
+    let original = samples[0].bytes_per_hour as f64 / 1e6;
+    assert!((26.0..32.0).contains(&original), "{original}");
     // About 14 MB per hour at 32 kbps.
     let mp3 = samples[1].bytes_per_hour as f64 / 1e6;
     assert!((12.0..17.0).contains(&mp3), "{mp3}");
