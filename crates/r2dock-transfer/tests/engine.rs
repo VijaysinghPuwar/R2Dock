@@ -434,7 +434,19 @@ async fn wrong_credentials_fail_without_retry_storm() {
         None,
     );
     let j = wait_state(&h.engine, ids[0], &[JobState::Failed]).await;
-    assert_eq!(j.attempt, 1, "auth failures are not retried");
+    // The auth error itself is never retried. On Windows the server can
+    // reset the connection while rejecting the request body, so the first
+    // attempt may end as a (retryable) network error before the 403 arrives.
+    let code = j.error.as_ref().map(|e| e.code);
+    assert_eq!(code, Some(ErrorCode::SignatureMismatch), "{:?}", j.error);
+    assert!(
+        j.attempt < r2dock_transfer::retry::MAX_ATTEMPTS,
+        "stopped at the auth error, attempt {}",
+        j.attempt
+    );
+    if !cfg!(windows) {
+        assert_eq!(j.attempt, 1, "auth failures are not retried");
+    }
     wait_state(&h.engine, ids[1], &[JobState::Failed]).await;
     assert!(
         h.events
