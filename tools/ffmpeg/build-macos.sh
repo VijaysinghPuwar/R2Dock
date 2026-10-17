@@ -8,8 +8,10 @@
 # Usage: tools/ffmpeg/build-macos.sh <work dir> <output dir>
 set -euo pipefail
 
-WORK="$1"
-OUT="$2"
+# Absolute paths, since the build changes directory.
+mkdir -p "$1" "$2"
+WORK="$(cd "$1" && pwd)"
+OUT="$(cd "$2" && pwd)"
 export MACOSX_DEPLOYMENT_TARGET=11.0
 
 FFMPEG_URL="https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz"
@@ -19,7 +21,6 @@ LAME_SHA="ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e"
 OPUS_URL="https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz"
 OPUS_SHA="65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1"
 
-mkdir -p "$WORK" "$OUT"
 PREFIX="$WORK/prefix"
 JOBS="$(sysctl -n hw.ncpu)"
 
