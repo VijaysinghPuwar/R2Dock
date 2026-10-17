@@ -1,6 +1,6 @@
 # Plan: Compress audio and video before upload
 
-Status: **In progress.** Target release: 0.3.0. Steps 1 to 5 are done (see Progress at the end).
+Status: **Audio released in 0.3.0** (steps 1 to 5). Video (step 6) is planned for 0.4.0, then step 7 completes the plan. See Progress at the end.
 
 ## Goal
 

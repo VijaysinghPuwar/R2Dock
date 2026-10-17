@@ -14,9 +14,9 @@ Browse, upload, and manage your buckets like a regular drive. Your keys never le
 
 [Download](https://github.com/VijaysinghPuwar/R2Dock/releases) · [How it works](#how-it-works) · [Security](#security) · [Build from source](#build-from-source)
 
-<img src="docs/screenshots/demo.gif" width="900" alt="R2Dock walkthrough: open a bucket, browse folders, view file details, preview an image, switch to grid view, check transfers and a failed upload, and export the activity log">
+<img src="docs/screenshots/demo.gif" width="900" alt="R2Dock walkthrough: browse a bucket, preview an image, upload WAV files with the compression estimate, watch files compress and upload, and open Compression settings">
 
-<sub>Walkthrough with sample data: browse a bucket, preview a file, watch transfers, and export the activity log.</sub>
+<sub>Walkthrough with sample data: browse a bucket, preview a file, upload with audio compression, and watch transfers.</sub>
 
 </div>
 
@@ -30,6 +30,7 @@ Cloudflare R2 is cheap and fast object storage, but managing it usually means a 
 |---|---|
 | **Browse** | Buckets and folders, list and grid views, search, sorting, file details, image/text/audio previews |
 | **Transfer** | Drag-and-drop uploads, parallel multipart uploads for large files, resumable downloads, pause / resume / retry, continues after a restart |
+| **Compress** | Optional: shrinks MP3, M4A, WAV, and FLAC before upload (an audiobook at 64 kbps becomes about half the size); files that would not get smaller upload unchanged |
 | **Manage** | New folder, rename, move, delete with confirmation, copy key or public link |
 | **Secure** | Keys in the OS keychain, strict app sandbox, safe local file handling |
 | **Logs** | Activity log as CSV (opens in Excel, Numbers, Google Sheets), names hidden by default, export by date range |
@@ -58,6 +59,10 @@ Cloudflare R2 is cheap and fast object storage, but managing it usually means a 
 3. **Connect** in R2Dock. With an *Object Read & Write* token, also type your bucket names (comma separated), because these tokens cannot list buckets.
 
 > Builds are not code signed yet. On Windows choose *More info → Run anyway*; on macOS right-click the app and choose *Open*.
+
+## Audio compression
+
+Off by default. Turn it on in Settings > Compression and install the compression tools (FFmpeg, downloaded once from this project's releases and checked by SHA-256; about 18 MB on macOS, 91 MB on Windows, 97 MB on Linux). Uploads then compress audio on your computer first: speech to 32 kbps MP3, music to high-quality MP3, WAV to MP3 or FLAC. Your original files are never changed. Each file is probed, a 30 second sample is tested, and anything that would not shrink by at least 15% uploads as it is. Compare quality lets you listen to each setting first. Video compression is planned for a later version.
 
 ## Where are the logs?
 

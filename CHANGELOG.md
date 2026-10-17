@@ -2,6 +2,17 @@
 
 All notable changes are listed here. The format follows Keep a Changelog, and the project uses Semantic Versioning.
 
+## [0.3.0] - 2026-10-17
+
+### Added
+
+- Optional audio compression before upload (Settings > Compression, off by default). Speech becomes 32 or 48 kbps MP3, music high-quality MP3, and WAV, AIFF, FLAC, and ALAC become MP3 or FLAC; "Smallest" uses Opus instead. M4A stays M4A. The original file is never changed.
+- Files that would not shrink are uploaded as they are, with the reason shown: already compressed, would save too little (a 30 second sample is tested first on long files), compressed by R2Dock before, too small, or not audio.
+- Compression tools: FFmpeg 9.0.2 (LGPL) is downloaded once from this project's releases and checked by SHA-256 before it is unpacked and before each use. An FFmpeg already on the computer can be used instead.
+- Compare quality: 30 second samples of one of your files at each setting, to listen to before choosing.
+- Upload review shows the estimate ("Compress 195 audio files. Estimated 2.4 GB to 1.2 GB."), a switch for each upload, and files whose extension changes.
+- Transfer rows show "Compressing 42%" and "Saved 330 MB (50%)"; the details panel shows "Compressed: From 660 MB". Compressed uploads keep working across pause, cancel, retry, and restarts, and compression steps appear in the activity log.
+
 ## [0.2.1] - 2026-10-17
 
 ### Fixed
