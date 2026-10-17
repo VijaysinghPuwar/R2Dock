@@ -117,6 +117,7 @@ pub struct AppState {
     pub moves: Registry<PendingMove>,
     pub media: MediaRegistry,
     pub credential_store_label: String,
+    pub activity: Arc<crate::activity::ActivityLog>,
 }
 
 impl AppState {
@@ -141,6 +142,15 @@ impl AppState {
             .clone()
             .or_else(|| self.paths.downloads.clone())
             .or_else(|| self.paths.home.clone())
+    }
+
+    /// The activity log folder: chosen in settings, else `<logs>/activity`.
+    pub fn activity_dir(&self) -> PathBuf {
+        self.settings
+            .read()
+            .activity_dir
+            .clone()
+            .unwrap_or_else(|| self.paths.logs.join("activity"))
     }
 
     pub fn display_path(&self, path: &std::path::Path) -> String {

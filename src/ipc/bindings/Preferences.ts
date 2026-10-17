@@ -10,4 +10,16 @@ import type { ViewMode } from "./ViewMode";
  * Settings the frontend may read and change. The download folder is not
  * here: it is only changed through a Rust-side folder picker.
  */
-export type Preferences = { theme: Theme, density: Density, textSize: TextSize, showThumbnails: boolean, defaultView: ViewMode, showDetailsPanel: boolean, concurrency: number, askWhereToSave: boolean, conflictPolicy: ConflictPolicy, historyDays: number, multipartThresholdMib: number, typedConfirmThreshold: number, warnExecutables: boolean, notifyOnComplete: boolean, notifyOnFailure: boolean, logLevel: LogLevel, includeHiddenOsFiles: boolean, renameNoticeSeen: boolean, };
+export type Preferences = { theme: Theme, density: Density, textSize: TextSize, showThumbnails: boolean, defaultView: ViewMode, showDetailsPanel: boolean, concurrency: number, askWhereToSave: boolean, conflictPolicy: ConflictPolicy, historyDays: number, multipartThresholdMib: number, typedConfirmThreshold: number, warnExecutables: boolean, notifyOnComplete: boolean, notifyOnFailure: boolean, logLevel: LogLevel, includeHiddenOsFiles: boolean, renameNoticeSeen: boolean, 
+/**
+ * Record user actions and their results in the activity log.
+ */
+activityLog: boolean, 
+/**
+ * Write bucket, folder, and file names in the activity log instead of hashes.
+ */
+activityIncludeNames: boolean, 
+/**
+ * Days to keep activity log files.
+ */
+activityDays: number, };

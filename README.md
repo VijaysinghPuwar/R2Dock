@@ -1,106 +1,155 @@
-<p align="center">
-  <img src="assets/brand/logo-icon.svg" width="96" height="96" alt="R2Dock logo">
-</p>
+<div align="center">
 
-<h1 align="center">R2Dock</h1>
+<img src="assets/brand/logo-icon.svg" width="112" alt="R2Dock logo">
 
-<p align="center">A desktop file manager for Cloudflare R2. Browse, upload, download, and manage your buckets like a regular drive. Your keys stay on your computer.</p>
+# R2Dock
 
-R2Dock runs on Windows, macOS, and Linux. It talks directly to the R2 S3 API from your machine. There is no R2Dock server, account, or telemetry.
+**A fast, secure desktop app for Cloudflare R2.**<br>
+Browse, upload, and manage your buckets like a regular drive. Your keys never leave your computer.
 
-Status: **0.1.0 preview.** Builds are not code signed yet. Behaviour is tested against a local S3-compatible server; it has not yet been through a full test pass against real R2 (see [Limitations](#limitations)).
+[![CI](https://github.com/VijaysinghPuwar/R2Dock/actions/workflows/ci.yml/badge.svg)](https://github.com/VijaysinghPuwar/R2Dock/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/VijaysinghPuwar/R2Dock?include_prereleases&color=F4A836)](https://github.com/VijaysinghPuwar/R2Dock/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2A2832)](LICENSE)
+![Platforms](https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-supported-2A2832)
+
+[Download](https://github.com/VijaysinghPuwar/R2Dock/releases) · [How it works](#how-it-works) · [Security](#security) · [Build from source](#build-from-source)
+
+<img src="docs/screenshots/demo.gif" width="900" alt="R2Dock walkthrough: open a bucket, browse folders, view file details, preview an image, and check transfers">
+
+<sub>Walkthrough with sample data: browse a bucket, inspect a file, preview it, and watch transfers.</sub>
+
+</div>
+
+## Why R2Dock
+
+Cloudflare R2 is cheap and fast object storage, but managing it usually means a terminal or a web dashboard. R2Dock gives it a familiar file-manager interface that runs on your own machine, with no server, no account, and no telemetry.
 
 ## Features
 
-- Connect one or more R2 accounts with R2 API token credentials (Default, EU, and FedRAMP jurisdictions). Test, edit, replace the secret, or remove a connection.
-- Bucket list, or manually added buckets for bucket-scoped tokens.
-- Folder browsing with pagination, sorting, list and grid views, and a details panel (size, type, modified, ETag, storage class, custom metadata).
-- Search within the current folder, or by key prefix across a bucket.
-- Uploads of files and folders by picker or drag and drop. Large files upload in parallel parts. Conflict choices: ask, skip, replace, keep both.
-- Downloads of files and folders, streamed to disk, resumable, written to a temporary file and moved into place without overwriting.
-- Transfer manager with progress, speed, pause and resume (large uploads and downloads), cancel, retry, and history. Unfinished work can continue after a restart.
-- New folder, delete with confirmation (typed confirmation for folders and large deletes), rename and move (copy, verify, then delete, with a report of anything that failed).
-- Previews for images, text, and audio. Copy object key or public URL.
-- Dark and Paper themes, compact density, larger text sizes, keyboard shortcuts.
+| | |
+|---|---|
+| **Browse** | Buckets and folders, list and grid views, search, sorting, file details, image/text/audio previews |
+| **Transfer** | Drag-and-drop uploads, parallel multipart uploads for large files, resumable downloads, pause / resume / retry, continues after a restart |
+| **Manage** | New folder, rename, move, delete with confirmation, copy key or public link |
+| **Secure** | Keys in the OS keychain, strict app sandbox, safe local file handling |
+| **Debug** | Optional activity log of every action and its result, with names hidden by default |
+| **Comfortable** | Dark and light themes, keyboard shortcuts, accessible controls |
 
-## Install
+## Screenshots
 
-Download the installer for your system from [Releases](https://github.com/VijaysinghPuwar/R2Dock/releases).
+<img src="docs/screenshots/explorer.jpg" alt="File explorer with folders, files, and the details panel for a selected image">
+<p align="center"><sub>File explorer with the details panel</sub></p>
 
-| System | File | Notes |
-|---|---|---|
-| Windows 10/11 | `.msi` or `-setup.exe` | Not signed yet: SmartScreen may warn. Choose "More info" then "Run anyway". |
-| macOS 11+ (Apple Silicon or Intel) | `.dmg` | Not notarized yet: right-click the app, choose Open, then confirm. |
-| Linux | `.AppImage`, `.deb`, or `.rpm` | Needs WebKitGTK 4.1. A Secret Service provider (GNOME Keyring or KWallet) is needed to save keys. |
+<table>
+<tr>
+<td><img src="docs/screenshots/transfers.jpg" alt="Transfers page with active, paused, and grouped uploads"></td>
+<td><img src="docs/screenshots/paper-theme.jpg" alt="Light Paper theme with several files selected"></td>
+</tr>
+<tr>
+<td align="center"><sub>Transfer manager: grouped, paused, and resumable transfers</sub></td>
+<td align="center"><sub>Light theme and multi-select</sub></td>
+</tr>
+</table>
 
-Each release includes `SHA256SUMS.txt` so you can check the files you downloaded.
+## Get started
 
-## Getting credentials
+1. **Install** the build for your system from [Releases](https://github.com/VijaysinghPuwar/R2Dock/releases).
+2. **Create an R2 API token** in the Cloudflare dashboard: *R2 → Manage API tokens*. Copy the Account ID, Access Key ID, and Secret Access Key.
+3. **Connect** in R2Dock. With an *Object Read & Write* token, also type your bucket names (comma separated), because these tokens cannot list buckets.
 
-R2Dock uses R2 S3 credentials, not your Cloudflare password or global API key.
+> Builds are not code signed yet. On Windows choose *More info → Run anyway*; on macOS right-click the app and choose *Open*.
 
-1. In the Cloudflare dashboard, open **R2**.
-2. Copy your **Account ID** from the R2 overview page.
-3. Open **Manage API tokens** and create a token.
-4. Choose **Object Read & Write** and pick the buckets R2Dock should manage. Choose Admin permissions only if you need to see all buckets.
-5. Copy the **Access Key ID** and **Secret Access Key**. The secret is shown only once.
+## How it works
 
-If your token is limited to specific buckets, enter a bucket name in the Connect form.
+R2Dock is a [Tauri 2](https://v2.tauri.app) app. A Rust core does all the real work; the React interface only draws the screen and asks the core for things through a small, typed list of commands.
+
+```mermaid
+flowchart LR
+    subgraph UI["Interface (React + TypeScript)"]
+        A[Explorer, Transfers, Settings]
+    end
+    subgraph Core["Rust core"]
+        B[Command layer<br/>validates every request]
+        C[R2 client<br/>AWS S3 SDK]
+        D[Transfer engine<br/>multipart, resume, retry]
+        E[Secret store]
+        F[Local file guard]
+    end
+    K[(OS keychain)]
+    R[(Cloudflare R2)]
+    L[(Your disk)]
+
+    A -- typed commands --> B
+    D -- progress events --> A
+    B --> C & D & E
+    E --> K
+    C --> R
+    D --> C
+    D --> F --> L
+```
+
+**Uploading a large file** splits it into parts that upload in parallel. Each part is checksummed, and the upload is saved to a small journal so it can resume after a pause, a lost connection, or an app restart.
+
+```mermaid
+sequenceDiagram
+    participant App as R2Dock
+    participant R2 as Cloudflare R2
+    App->>R2: Start multipart upload
+    par Up to 4 parts at a time
+        App->>R2: Upload part with MD5 checksum
+        R2-->>App: Part saved
+    end
+    App->>App: Check the file did not change
+    App->>R2: Complete upload
+```
 
 ## Security
 
-- Secret keys are stored in the operating system credential store: macOS Keychain, Windows Credential Manager, or Linux Secret Service. If none is available, the key is kept in memory for the current session only. There is no plaintext fallback.
-- After you save a connection, the secret never goes back to the user interface, and it is never written to config files or logs.
-- The interface can only call a fixed list of app commands. It has no direct file system, shell, or network access, and a strict Content Security Policy blocks remote scripts.
-- Local files are chosen with system pickers or drag and drop. Object keys are treated as untrusted: downloads cannot write outside the folder you chose, never follow symbolic links, and never overwrite a file unless you choose Replace.
+- **Keys stay local.** Secrets go straight to macOS Keychain, Windows Credential Manager, or Linux Secret Service. They are never written to files or logs and never sent back to the interface.
+- **Least privilege.** The interface has no file system, shell, or network access of its own. Every command is on an allowlist, and a strict Content Security Policy blocks remote scripts.
+- **Safe downloads.** Object names are treated as untrusted. Downloads cannot escape the chosen folder, never follow symbolic links, and never overwrite a file unless you choose Replace.
+- **Careful deletes.** Deleting folders or many files needs a typed confirmation that is checked again in Rust.
 
-See [SECURITY.md](SECURITY.md) for reporting a vulnerability and the threat model in [PLAN.md](PLAN.md) section 9.8.
+Details: [SECURITY.md](SECURITY.md) and the threat model in [PLAN.md](PLAN.md#98-threat-model).
 
-## Limitations
+## Tech stack
 
-- R2 has no real folders, no rename, no atomic move, no versioning, and no trash. Moving or renaming a folder copies and deletes every object inside it and can partially fail; R2Dock reports what failed. Deletes are permanent.
-- Folder sizes are only known after an explicit "Calculate", which lists every object (R2 may bill these operations).
-- Video and PDF previews are not available yet. There is no sync and no presigned share links.
-- Builds are unsigned and there is no automatic updater yet.
-- Integration tests run against a local S3-compatible server. Some R2-specific behaviours listed as **[Verify]** in PLAN.md have not been confirmed against real R2.
+| Layer | Tools |
+|---|---|
+| Desktop shell | Tauri 2 |
+| Core | Rust, Tokio, AWS SDK for Rust (S3), keyring |
+| Interface | React 19, TypeScript, TanStack Query and Virtual, Zustand, Radix UI |
+| Quality | 250+ automated tests, Clippy, ESLint, CI on Windows, macOS, and Linux |
 
-## Development
+## Project layout
 
-Requirements: Rust (stable), Node.js 22+, and the [Tauri 2 system prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
+```
+crates/
+  r2dock-core       Rules: object keys, safe local paths, part sizes, settings
+  r2dock-secrets    OS keychain access and session-only fallback
+  r2dock-r2         R2 client, listing, bulk delete and move
+  r2dock-transfer   Upload and download engine, journal, history
+src-tauri/          Desktop app: commands, permissions, activity log
+src/                React interface
+```
+
+Integration tests run against an in-process S3-compatible server, so they never touch a real bucket.
+
+## Build from source
+
+Requires Rust, Node.js 22+, and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
 
 ```sh
 npm ci
-npm run tauri dev       # run the app
-npm run tauri build     # build installers for this machine
+npm run tauri dev      # run the app
+npm run tauri build    # build an installer
+cargo test --workspace && npm test   # run the tests
 ```
 
-Tests and checks:
+## Limitations
 
-```sh
-cargo test --workspace                                  # Rust unit and integration tests
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all -- --check
-npm run lint && npm run typecheck && npm test           # frontend
-```
-
-TypeScript types for IPC are generated from Rust by `cargo test` into `src/ipc/bindings/`.
-
-Project layout:
-
-| Path | Contents |
-|---|---|
-| `crates/r2dock-core` | Pure logic: keys, local path safety, part planning, settings, storage, redaction |
-| `crates/r2dock-secrets` | OS credential store adapter and session-only store |
-| `crates/r2dock-r2` | R2 client, listing, object operations, bulk delete and move |
-| `crates/r2dock-transfer` | Transfer engine: uploads, downloads, scheduling, journal, history |
-| `crates/r2dock-testkit` | Test-only local S3 server |
-| `src-tauri` | Tauri app: commands, capabilities, media scheme |
-| `src` | React frontend |
-
-Design and architecture: [DESIGN.md](DESIGN.md), [PLAN.md](PLAN.md), and [docs/adr](docs/adr).
+R2 has no real folders, rename, versioning, or trash. Renaming or moving a folder copies and then deletes every file inside it, and deletes are permanent. R2Dock reports anything that fails part way.
 
 ## License
 
-[MIT](LICENSE). Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-R2Dock is an independent project and is not affiliated with Cloudflare. Cloudflare and R2 are trademarks of Cloudflare, Inc.
+[MIT](LICENSE) · Not affiliated with Cloudflare. Cloudflare and R2 are trademarks of Cloudflare, Inc.

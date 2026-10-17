@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn buckets() {
-        assert!(validate_bucket_name("webaudiotv-media").is_ok());
+        assert!(validate_bucket_name("media-library").is_ok());
         assert!(validate_bucket_name("ab").is_err());
         assert!(validate_bucket_name("Upper").is_err());
         assert!(validate_bucket_name("-bad").is_err());

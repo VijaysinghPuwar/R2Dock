@@ -18,7 +18,8 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useMediaQuery } from "../../lib/useMediaQuery";
 import { Button, IconButton } from "../../components/Button";
 import { SegmentedControl } from "../../components/Controls";
 import { SearchField } from "../../components/Fields";
@@ -39,9 +40,22 @@ function Breadcrumb({ connectionName, bucket, prefix }: { connectionName: string
   const openBucket = useNavStore((s) => s.openBucket);
   const crumbs = splitPrefix(prefix);
   const atRoot = crumbs.length === 0;
-  const collapse = crumbs.length > 3;
-  const hidden = collapse ? crumbs.slice(0, crumbs.length - 2) : [];
-  const shown = collapse ? crumbs.slice(-2) : crumbs;
+  // When the toolbar is short on space, drop the connection name and fold
+  // more folders into the "..." menu instead of squeezing every segment.
+  const navRef = useRef<HTMLElement>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => setWidth(entries[0]?.contentRect.width ?? 0));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const narrow = width > 0 && width < 520;
+  const keep = narrow ? 1 : 2;
+  const collapse = crumbs.length > (narrow ? keep : keep + 1);
+  const hidden = collapse ? crumbs.slice(0, crumbs.length - keep) : [];
+  const shown = collapse ? crumbs.slice(-keep) : crumbs;
 
   const sep = (
     <span className="crumb-sep" aria-hidden="true">
@@ -49,16 +63,18 @@ function Breadcrumb({ connectionName, bucket, prefix }: { connectionName: string
     </span>
   );
   const items: ReactNode[] = [];
-  items.push(
-    <li key="conn">
-      <button type="button" className="crumb" onClick={() => navigate({ view: "buckets" })}>
-        {connectionName}
-      </button>
-    </li>,
-  );
+  if (!narrow) {
+    items.push(
+      <li key="conn">
+        <button type="button" className="crumb" onClick={() => navigate({ view: "buckets" })}>
+          {connectionName}
+        </button>
+      </li>,
+    );
+  }
   items.push(
     <li key="bucket">
-      {sep}
+      {!narrow && sep}
       {atRoot ? (
         <span className="crumb is-current" aria-current="page">
           {bucket}
@@ -108,7 +124,7 @@ function Breadcrumb({ connectionName, bucket, prefix }: { connectionName: string
     );
   });
   return (
-    <nav aria-label="Breadcrumb" className="breadcrumb">
+    <nav ref={navRef} aria-label="Breadcrumb" className="breadcrumb">
       <ol>{items}</ol>
     </nav>
   );
@@ -172,6 +188,9 @@ export function Toolbar(props: ToolbarProps) {
 
   const where = folderLabel(props.bucket, props.prefix);
   const selection = props.selectedCount > 0;
+  // On narrower windows the selection actions become icon buttons so none are cut off.
+  const compactSelection = useMediaQuery("(max-width: 1360px)");
+  const copyLabel = props.selectedCount === 1 ? "Copy key" : "Copy keys";
 
   return (
     <div className="toolbar" role="toolbar" aria-label="Folder actions">
@@ -180,18 +199,29 @@ export function Toolbar(props: ToolbarProps) {
           <div className="selection-bar" role="group" aria-label="Selection">
             <IconButton label="Clear selection" shortcut="Esc" size="sm" icon={<X size={14} />} onClick={props.onClearSelection} />
             <span className="selection-count num">{formatCount(props.selectedCount)} selected</span>
-            <Button size="sm" variant="ghost" icon={<Download size={14} />} onClick={props.onDownloadSelected}>
-              Download
-            </Button>
-            <Button size="sm" variant="ghost" icon={<FolderInput size={14} />} onClick={props.onMoveSelected}>
-              Move to...
-            </Button>
-            <Button size="sm" variant="ghost" icon={<Copy size={14} />} onClick={props.onCopyKeys}>
-              {props.selectedCount === 1 ? "Copy key" : "Copy keys"}
-            </Button>
-            <Button size="sm" variant="ghost" className="danger-text" icon={<Trash2 size={14} />} onClick={props.onDeleteSelected}>
-              Delete
-            </Button>
+            {compactSelection ? (
+              <>
+                <IconButton label="Download" size="sm" icon={<Download size={14} />} onClick={props.onDownloadSelected} />
+                <IconButton label="Move to..." size="sm" icon={<FolderInput size={14} />} onClick={props.onMoveSelected} />
+                <IconButton label={copyLabel} size="sm" icon={<Copy size={14} />} onClick={props.onCopyKeys} />
+                <IconButton label="Delete" size="sm" className="danger-text" icon={<Trash2 size={14} />} onClick={props.onDeleteSelected} />
+              </>
+            ) : (
+              <>
+                <Button size="sm" variant="ghost" icon={<Download size={14} />} onClick={props.onDownloadSelected}>
+                  Download
+                </Button>
+                <Button size="sm" variant="ghost" icon={<FolderInput size={14} />} onClick={props.onMoveSelected}>
+                  Move to...
+                </Button>
+                <Button size="sm" variant="ghost" icon={<Copy size={14} />} onClick={props.onCopyKeys}>
+                  {copyLabel}
+                </Button>
+                <Button size="sm" variant="ghost" className="danger-text" icon={<Trash2 size={14} />} onClick={props.onDeleteSelected}>
+                  Delete
+                </Button>
+              </>
+            )}
           </div>
         ) : (
           <>

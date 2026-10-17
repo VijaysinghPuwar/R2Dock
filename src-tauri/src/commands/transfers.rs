@@ -45,30 +45,24 @@ pub fn register_selection(state: &AppState, paths: Vec<PathBuf>) -> Selection {
     }
 }
 
-#[tauri::command]
-pub async fn pick_upload_files(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> CmdResult<Option<Selection>> {
+async fn pick_upload_files_inner(app: AppHandle, state: &AppState) -> CmdResult<Option<Selection>> {
     Ok(dialogs::pick_files(&app)
         .await?
         .filter(|p| !p.is_empty())
-        .map(|paths| register_selection(&state, paths)))
+        .map(|paths| register_selection(state, paths)))
 }
 
-#[tauri::command]
-pub async fn pick_upload_folder(
+async fn pick_upload_folder_inner(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: &AppState,
 ) -> CmdResult<Option<Selection>> {
     Ok(dialogs::pick_upload_folder(&app)
         .await?
-        .map(|path| register_selection(&state, vec![path])))
+        .map(|path| register_selection(state, vec![path])))
 }
 
-#[tauri::command]
-pub async fn upload_prepare(
-    state: State<'_, AppState>,
+async fn upload_prepare_inner(
+    state: &AppState,
     selection_id: String,
     connection_id: Uuid,
     bucket: String,
@@ -96,7 +90,7 @@ pub async fn upload_prepare(
     let items = upload_items(scanned, &prefix, state.paths.home.as_deref());
     let keys: Vec<String> = items.files.iter().map(|f| f.key.clone()).collect();
     let (b, p) = (bucket.clone(), prefix.clone());
-    let conflicts = with_client(&state, connection_id, |c| async move {
+    let conflicts = with_client(state, connection_id, |c| async move {
         count_conflicts(&c, &b, &p, &keys).await
     })
     .await?;
@@ -137,9 +131,8 @@ pub async fn upload_prepare(
     })
 }
 
-#[tauri::command]
-pub async fn upload_start(
-    state: State<'_, AppState>,
+async fn upload_start_inner(
+    state: &AppState,
     plan_id: String,
     policy: ConflictPolicy,
 ) -> CmdResult<u32> {
@@ -149,7 +142,7 @@ pub async fn upload_start(
         .ok_or_else(|| AppError::not_found("This upload expired. Choose the files again."))?;
     if !plan.markers.is_empty() {
         let (bucket, markers) = (plan.bucket.clone(), plan.markers.clone());
-        with_client(&state, plan.connection, |c| async move {
+        with_client(state, plan.connection, |c| async move {
             for m in markers {
                 c.create_folder(&bucket, &m).await?;
             }
@@ -181,10 +174,9 @@ pub async fn upload_start(
     Ok(n)
 }
 
-#[tauri::command]
-pub async fn download_start(
+async fn download_start_inner(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: &AppState,
     connection_id: Uuid,
     bucket: String,
     keys: Vec<String>,
@@ -215,7 +207,7 @@ pub async fn download_start(
         .map_err(|e| r2dock_core::app_error::io_error(&e, "open the download folder"))?;
 
     let (b, k, p) = (bucket.clone(), keys.clone(), prefixes.clone());
-    let objects = with_client(&state, connection_id, |c| async move {
+    let objects = with_client(state, connection_id, |c| async move {
         collect_objects(&c, &b, &k, &p, &CancellationToken::new()).await
     })
     .await?;
@@ -253,6 +245,138 @@ pub async fn download_start(
     }))
 }
 
+#[tauri::command]
+pub async fn pick_upload_files(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<Option<Selection>> {
+    let mut act = state.activity.start_action("pick_files");
+    let result = pick_upload_files_inner(app, &state).await;
+    if let Ok(sel) = &result {
+        act.set("count", sel.as_ref().map_or(0, |s| s.count));
+        act.set("cancelled", sel.is_none());
+    }
+    act.end(&result);
+    result
+}
+
+#[tauri::command]
+pub async fn pick_upload_folder(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<Option<Selection>> {
+    let mut act = state.activity.start_action("pick_folder");
+    let result = pick_upload_folder_inner(app, &state).await;
+    if let Ok(sel) = &result {
+        act.set("cancelled", sel.is_none());
+    }
+    act.end(&result);
+    result
+}
+
+#[tauri::command]
+pub async fn upload_prepare(
+    state: State<'_, AppState>,
+    selection_id: String,
+    connection_id: Uuid,
+    bucket: String,
+    prefix: String,
+) -> CmdResult<UploadPlan> {
+    let mut act = state
+        .activity
+        .start_action("upload_prepare")
+        .connection(connection_id)
+        .name("bucket", &bucket)
+        .name("destination", &prefix);
+    let result = upload_prepare_inner(&state, selection_id, connection_id, bucket, prefix).await;
+    if let Ok(p) = &result {
+        act.set("files", p.files);
+        act.set("folders", p.folders);
+        act.set("bytes", p.bytes);
+        act.set("conflicts", p.conflicts);
+        act.set("skipped", p.skipped.len());
+        act.set("too_many", p.too_many);
+    }
+    act.end(&result);
+    result
+}
+
+#[tauri::command]
+pub async fn upload_start(
+    state: State<'_, AppState>,
+    plan_id: String,
+    policy: ConflictPolicy,
+) -> CmdResult<u32> {
+    let mut act = state
+        .activity
+        .start_action("upload_start")
+        .field("policy", format!("{policy:?}"));
+    let result = upload_start_inner(&state, plan_id, policy).await;
+    if let Ok(n) = &result {
+        act.set("files", *n);
+    }
+    act.end(&result);
+    result
+}
+
+#[tauri::command]
+pub async fn download_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    bucket: String,
+    keys: Vec<String>,
+    prefixes: Vec<String>,
+) -> CmdResult<Option<DownloadStarted>> {
+    let mut act = state
+        .activity
+        .start_action("download_start")
+        .connection(connection_id)
+        .name("bucket", &bucket)
+        .field("files_selected", keys.len())
+        .field("folders_selected", prefixes.len());
+    let result = download_start_inner(app, &state, connection_id, bucket, keys, prefixes).await;
+    if let Ok(started) = &result {
+        act.set("files", started.as_ref().map_or(0, |s| s.jobs));
+        act.set("cancelled", started.is_none());
+    }
+    act.end(&result);
+    result
+}
+
+/// Record a transfer reaching a state worth keeping in the activity log.
+fn record_job(state: &AppState, job: &r2dock_transfer::JobSnapshot) {
+    let action = match job.state {
+        JobState::Completed => "transfer_completed",
+        JobState::Failed => "transfer_failed",
+        JobState::Cancelled => "transfer_cancelled",
+        JobState::Skipped => "transfer_skipped",
+        JobState::NeedsDecision => "transfer_needs_decision",
+        JobState::Paused => "transfer_paused",
+        JobState::Retrying => "transfer_retrying",
+        JobState::Interrupted => "transfer_interrupted",
+        _ => return,
+    };
+    let act = state
+        .activity
+        .start_action(action)
+        .connection(job.connection_id)
+        .field("job", job.id.simple().to_string()[..8].to_string())
+        .field("direction", format!("{:?}", job.direction))
+        .name("key", &job.key)
+        .field("bytes", job.total_bytes)
+        .field("transferred", job.transferred_bytes)
+        .field("attempt", job.attempt);
+    let act = match (job.parts_done, job.parts_total) {
+        (Some(d), Some(t)) => act.field("parts", format!("{d}/{t}")),
+        _ => act,
+    };
+    match &job.error {
+        Some(e) if job.state != JobState::Completed => act.end::<()>(&Err(e.clone())),
+        _ => act.end::<()>(&Ok(())),
+    }
+}
+
 /// Subscribe the webview to transfer events. Also sends a system
 /// notification when work finishes while the window is in the background.
 #[tauri::command]
@@ -266,8 +390,12 @@ pub async fn transfer_subscribe(
     let failed = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let completed = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let sink_engine = engine.clone();
+    let sink_app = app.clone();
     engine.subscribe(Arc::new(move |event: TransferEvent| {
         if let TransferEvent::Updated { job } = &event {
+            if let Some(state) = sink_app.try_state::<AppState>() {
+                record_job(&state, job);
+            }
             match job.state {
                 JobState::Completed => {
                     completed.fetch_add(1, Ordering::Relaxed);
@@ -334,21 +462,42 @@ fn notify_if_background(app: &AppHandle, done: u32, failed: u32) {
 
 #[tauri::command]
 pub fn transfer_control(state: State<'_, AppState>, id: Uuid, action: JobAction) -> CmdResult<()> {
-    state.engine.control(id, action)
+    let act = state
+        .activity
+        .start_action("transfer_control")
+        .field("job", id.simple().to_string()[..8].to_string())
+        .field("control", format!("{action:?}"));
+    let result = state.engine.control(id, action);
+    act.end(&result);
+    result
 }
 
 #[tauri::command]
 pub fn transfer_control_many(state: State<'_, AppState>, ids: Vec<Uuid>, action: JobAction) {
+    state
+        .activity
+        .start_action("transfer_control_many")
+        .field("jobs", ids.len())
+        .field("control", format!("{action:?}"))
+        .end::<()>(&Ok(()));
     state.engine.control_many(&ids, action);
 }
 
 #[tauri::command]
 pub fn transfer_pause_all(state: State<'_, AppState>) {
+    state
+        .activity
+        .start_action("transfer_pause_all")
+        .end::<()>(&Ok(()));
     state.engine.pause_all();
 }
 
 #[tauri::command]
 pub fn transfer_clear_finished(state: State<'_, AppState>) {
+    state
+        .activity
+        .start_action("transfer_clear_finished")
+        .end::<()>(&Ok(()));
     state.engine.clear_finished();
 }
 

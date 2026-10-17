@@ -45,3 +45,13 @@ pub fn key_arg(key: &str) -> CmdResult<String> {
     r2dock_core::keys::validate_key(key).map_err(|e| AppError::invalid_input(e.to_string()))?;
     Ok(key.to_string())
 }
+
+/// Run a command body and record its result in the activity log.
+pub async fn logged<T, Fut>(act: crate::activity::Act, body: Fut) -> CmdResult<T>
+where
+    Fut: std::future::Future<Output = CmdResult<T>>,
+{
+    let result = body.await;
+    act.end(&result);
+    result
+}

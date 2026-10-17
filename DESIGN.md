@@ -304,7 +304,7 @@ The sidebar also lists buckets of the active connection under a "Buckets" group 
 
 ```text
 +------------------------------------------------------------------------------------------+
-| [=] R2Dock           |  < >  Personal R2 / webaudiotv-media / Audiobook G     [ Search  ] |
+| [=] R2Dock           |  < >  Personal R2 / media-library / Audiobook G     [ Search  ] |
 |                      |  [Upload v] [New folder]  [Refresh]        Sort v  [List|Grid]  ... |
 | [Personal R2      v] |------------------------------------------------------------------|
 |                      |  [ ] Name                         Type      Size      Modified   |  Details
@@ -314,7 +314,7 @@ The sidebar also lists buckets of the active connection under a "Buckets" group 
 |  [] Transfers   (3)  |  [ ] [A] intro.mp3                MP3 audio 18.4 MB   Sep 28      |  selected)
 |                      |                                                                    |
 |  BUCKETS             |                                                                    |
-|   webaudiotv-media   |                                                                    |
+|   media-library   |                                                                    |
 |   site-assets        |                                                                    |
 |   backups-archive    |                                                                    |
 |                      |                                                                    |
@@ -511,11 +511,11 @@ Test states (inline result area above the footer):
 |---|---|---|
 | Testing | Spinner + text | "Connecting to R2..." |
 | Success, admin token | `success` check | "Connected. Found 3 buckets." |
-| Success, bucket-scoped token | `success` check | "Connected to webaudiotv-media. This key can only see this bucket." |
+| Success, bucket-scoped token | `success` check | "Connected to media-library. This key can only see this bucket." |
 | Invalid access key | `danger` | "The Access Key ID was not recognized. Check that you copied the R2 token's Access Key ID." |
 | Wrong secret | `danger` | "The Secret Access Key does not match this Access Key ID. Paste the secret again or create a new token." |
 | Access denied | `warning` | "R2 refused to list buckets. If your token is limited to specific buckets, enter a bucket name above. Otherwise check the Access Key ID and Secret Access Key." |
-| Bucket not found | `danger` | "No bucket named "webaudio-media" was found for this account, or this key cannot see it." |
+| Bucket not found | `danger` | "No bucket named "medi-library" was found for this account, or this key cannot see it." |
 | Invalid account ID / endpoint | `danger` | "Could not reach R2 for this account ID. Check the account ID and jurisdiction." |
 | Network failure | `danger` | "Could not connect. Check your internet connection or proxy settings, then try again." |
 | Timeout | `warning` | "R2 did not respond in time. Try again." |
@@ -544,7 +544,7 @@ Sample rows (simulated):
 
 | Bucket | Created |
 |---|---|
-| webaudiotv-media | Mar 14, 2025 |
+| media-library | Mar 14, 2025 |
 | site-assets | Jun 2, 2025 |
 | backups-archive | Jan 9, 2026 |
 
@@ -554,7 +554,7 @@ Bucket size and object count are not shown here (R2's S3 API does not report the
 
 **3B. Bucket browser** (`FileExplorer`)
 
-Breadcrumb: `Personal R2 / webaudiotv-media / Audiobook G / The Strongest Legend of Dragon Ball`
+Breadcrumb: `Personal R2 / media-library / Audiobook G / The Strongest Legend of Dragon Ball`
 
 Rows (simulated):
 
@@ -570,7 +570,7 @@ Inside `ch 1-195/`: 195 files named `ch-001.mp3` through `ch-195.mp3`, sizes bet
 Full sample tree for the prototype:
 
 ```text
-webaudiotv-media/
+media-library/
 ├── Audiobook G/
 │   ├── The Strongest Legend of Dragon Ball/
 │   │   ├── ch 1-195/            (195 mp3 files)
@@ -610,7 +610,7 @@ Step 2, review (shown when the drop contains a folder, more than 20 files, or co
 
 Dialog title: "Upload 214 items"
 
-- Destination line with change button: "To: webaudiotv-media / Audiobook G / The Strongest Legend of Dragon Ball  [Change]"
+- Destination line with change button: "To: media-library / Audiobook G / The Strongest Legend of Dragon Ball  [Change]"
 - Summary: "2 folders, 212 files, 3.4 GB"
 - Conflicts section (if any): "4 files already exist in this folder." Options (radio): **Ask for each**, **Replace existing**, **Skip existing**, **Keep both** (adds " (1)" before the extension). Default: Skip existing for folder uploads, Ask for each for individual files.
 - Skipped items notice (if any): "3 items will be skipped: 2 shortcuts (symbolic links) and 1 file with a name R2 cannot store." Expandable list.
@@ -644,7 +644,7 @@ Transfer row (`TransferRow`), 56 px tall:
 
 ```text
 [^] ch-142.mp3                                             28.4 MB of 31.0 MB
-    Upload to webaudiotv-media/Audiobook G/.../ch 1-195    [=============----] 92%
+    Upload to media-library/Audiobook G/.../ch 1-195    [=============----] 92%
     5.8 MB/s . 1 s left . Part 6 of 7                       [Pause] [Cancel]
 ```
 

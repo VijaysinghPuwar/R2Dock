@@ -63,6 +63,9 @@ export const DEFAULT_PREFERENCES: Preferences = {
   logLevel: "standard",
   includeHiddenOsFiles: false,
   renameNoticeSeen: false,
+  activityLog: true,
+  activityIncludeNames: false,
+  activityDays: 14,
 };
 
 const FALLBACK_INFO: AppInfo = {

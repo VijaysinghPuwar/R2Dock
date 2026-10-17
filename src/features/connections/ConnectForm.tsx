@@ -250,7 +250,7 @@ export function ConnectForm({
         ref={bucketRef}
         label="Buckets (optional)"
         info="Needed for Object Read & Write tokens, which cannot list buckets. Separate several names with commas."
-        placeholder="webaudiotv-media, site-assets"
+        placeholder="media-library, site-assets"
         mono
         value={bucket}
         onChange={(e) => touch(setBucket)(e.target.value)}

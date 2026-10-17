@@ -14,7 +14,9 @@ import {
   errorMessage,
   historyClear,
   openExternal,
+  openActivityFolder,
   openLogFolder,
+  settingsChooseActivityDir,
   settingsChooseDownloadDir,
   settingsReset,
 } from "../../ipc/commands";
@@ -322,9 +324,57 @@ export function AdvancedSection() {
   const openLogs = () => {
     openLogFolder().catch((e: unknown) => toast.danger(errorMessage(e)));
   };
+  const openActivity = () => {
+    openActivityFolder().catch((e: unknown) => toast.danger(errorMessage(e)));
+  };
+  const settings = useSettings();
+  const [choosingActivity, setChoosingActivity] = useState(false);
+  const chooseActivityDir = async () => {
+    setChoosingActivity(true);
+    try {
+      const view = await settingsChooseActivityDir();
+      client.setQueryData(qk.settings, view);
+    } catch (e) {
+      toast.danger(errorMessage(e));
+    } finally {
+      setChoosingActivity(false);
+    }
+  };
 
   return (
     <Section id="advanced" title="Advanced">
+      <Switch
+        label="Activity log"
+        description="Records each action and its result (with error codes) to help find problems. Never records keys or secrets."
+        checked={prefs.activityLog}
+        onChange={(activityLog) => update({ activityLog })}
+      />
+      <Switch
+        label="Include file and folder names in the activity log"
+        description="Off: names are replaced with short codes. Turn on only while tracking down a problem."
+        checked={prefs.activityIncludeNames}
+        disabled={!prefs.activityLog}
+        onChange={(activityIncludeNames) => update({ activityIncludeNames })}
+      />
+      <ControlRow label="Activity log folder">
+        <span className="mono truncate download-dir" title={settings.data?.activityDir}>
+          {settings.data?.activityDir ?? "--"}
+        </span>
+        <Button size="sm" loading={choosingActivity} onClick={() => void chooseActivityDir()}>
+          Change
+        </Button>
+        <Button size="sm" icon={<FolderOpen size={14} />} onClick={openActivity}>
+          Open
+        </Button>
+      </ControlRow>
+      <NumberSetting
+        label="Keep activity logs for"
+        unit="days"
+        min={1}
+        max={365}
+        value={prefs.activityDays}
+        onCommit={(activityDays) => update({ activityDays })}
+      />
       <ControlRow label="Log level" helper="Logs never contain your secret keys.">
         <SegmentedControl<LogLevel>
           label="Log level"

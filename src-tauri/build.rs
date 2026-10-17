@@ -44,6 +44,9 @@ const COMMANDS: &[&str] = &[
     "settings_choose_download_dir",
     "settings_reset",
     "history_clear",
+    "settings_choose_activity_dir",
+    "open_activity_folder",
+    "activity_note",
 ];
 
 fn main() {

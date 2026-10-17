@@ -33,6 +33,7 @@
 }
 
 .breadcrumb {
+  flex: 1 1 auto;
   min-width: 0;
   margin-left: var(--sp-1);
 }
@@ -546,5 +547,4 @@ button.crumb:hover {
 
 .breadcrumb li:last-child {
   flex-shrink: 0;
-  max-width: 50%;
 }

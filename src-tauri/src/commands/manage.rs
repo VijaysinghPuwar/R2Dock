@@ -12,7 +12,7 @@ use tauri::ipc::Channel;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::{CmdResult, bucket_arg, key_arg, prefix_arg, with_client};
+use super::{CmdResult, bucket_arg, key_arg, logged, prefix_arg, with_client};
 use crate::dto::{DeletePreview, DeleteResult, MovePreview, MoveResult, OpProgress};
 use crate::state::{AppState, PendingDelete, PendingMove};
 
@@ -43,9 +43,8 @@ pub fn typed_phrase(keys: &[String], prefixes: &[String], count: u64) -> String 
     }
 }
 
-#[tauri::command]
-pub async fn delete_preview(
-    state: State<'_, AppState>,
+async fn delete_preview_inner(
+    state: &AppState,
     connection_id: Uuid,
     bucket: String,
     keys: Vec<String>,
@@ -54,7 +53,7 @@ pub async fn delete_preview(
     let bucket = bucket_arg(&bucket)?;
     check_sources(&keys, &prefixes)?;
     let (b, k, p) = (bucket.clone(), keys.clone(), prefixes.clone());
-    let objects = with_client(&state, connection_id, |c| async move {
+    let objects = with_client(state, connection_id, |c| async move {
         collect_objects(&c, &b, &k, &p, &CancellationToken::new()).await
     })
     .await?;
@@ -81,9 +80,8 @@ pub async fn delete_preview(
     })
 }
 
-#[tauri::command]
-pub async fn delete_execute(
-    state: State<'_, AppState>,
+async fn delete_execute_inner(
+    state: &AppState,
     token: String,
     typed: Option<String>,
     on_progress: Channel<OpProgress>,
@@ -103,7 +101,7 @@ pub async fn delete_execute(
     let total = pending.keys.len() as u64;
     let keys = pending.keys;
     let bucket = pending.bucket;
-    let (deleted, failures) = with_client(&state, pending.connection, |c| async move {
+    let (deleted, failures) = with_client(state, pending.connection, |c| async move {
         delete_keys(&c, &bucket, keys, &CancellationToken::new(), |done| {
             let _ = on_progress.send(OpProgress { done, total });
         })
@@ -114,9 +112,8 @@ pub async fn delete_execute(
     Ok(DeleteResult { deleted, failures })
 }
 
-#[tauri::command]
-pub async fn move_preview(
-    state: State<'_, AppState>,
+async fn move_preview_inner(
+    state: &AppState,
     connection_id: Uuid,
     bucket: String,
     keys: Vec<String>,
@@ -132,7 +129,7 @@ pub async fn move_preview(
         validate_name(r).map_err(|e| AppError::invalid_input(e.to_string()))?;
     }
     let (b, k, p) = (bucket.clone(), keys.clone(), prefixes.clone());
-    let objects = with_client(&state, connection_id, |c| async move {
+    let objects = with_client(state, connection_id, |c| async move {
         collect_objects(&c, &b, &k, &p, &CancellationToken::new()).await
     })
     .await?;
@@ -162,9 +159,8 @@ pub async fn move_preview(
     })
 }
 
-#[tauri::command]
-pub async fn move_execute(
-    state: State<'_, AppState>,
+async fn move_execute_inner(
+    state: &AppState,
     token: String,
     on_progress: Channel<OpProgress>,
 ) -> CmdResult<MoveResult> {
@@ -177,7 +173,7 @@ pub async fn move_execute(
     let total = pending.items.len() as u64;
     let bucket = pending.bucket;
     let items = pending.items;
-    let report = with_client(&state, pending.connection, |c| async move {
+    let report = with_client(state, pending.connection, |c| async move {
         move_items(
             &c,
             &bucket,
@@ -196,6 +192,120 @@ pub async fn move_execute(
         failures: report.failures,
         copied_not_deleted: report.copied_not_deleted,
     })
+}
+
+#[tauri::command]
+pub async fn delete_preview(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    bucket: String,
+    keys: Vec<String>,
+    prefixes: Vec<String>,
+) -> CmdResult<DeletePreview> {
+    let mut act = state
+        .activity
+        .start_action("delete_preview")
+        .connection(connection_id)
+        .name("bucket", &bucket)
+        .field("files_selected", keys.len())
+        .field("folders_selected", prefixes.len());
+    let result = delete_preview_inner(&state, connection_id, bucket, keys, prefixes).await;
+    if let Ok(p) = &result {
+        act.set("objects", p.objects);
+        act.set("typed_confirm", p.needs_typed);
+    }
+    act.end(&result);
+    result
+}
+
+#[tauri::command]
+pub async fn delete_execute(
+    state: State<'_, AppState>,
+    token: String,
+    typed: Option<String>,
+    on_progress: Channel<OpProgress>,
+) -> CmdResult<DeleteResult> {
+    let mut act = state.activity.start_action("delete");
+    let result = delete_execute_inner(&state, token, typed, on_progress).await;
+    if let Ok(r) = &result {
+        act.set("deleted", r.deleted);
+        act.set("failed", r.failures.len());
+        let names: Vec<String> = r
+            .failures
+            .iter()
+            .take(20)
+            .map(|f| format!("{}: {}", state.activity.name(&f.key), f.message))
+            .collect();
+        if !names.is_empty() {
+            act.set("failures", names);
+        }
+    }
+    act.end(&result);
+    result
+}
+
+#[tauri::command]
+pub async fn move_preview(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    bucket: String,
+    keys: Vec<String>,
+    prefixes: Vec<String>,
+    dest_prefix: String,
+    rename: Option<String>,
+) -> CmdResult<MovePreview> {
+    let act = state
+        .activity
+        .start_action(if rename.is_some() {
+            "rename_preview"
+        } else {
+            "move_preview"
+        })
+        .connection(connection_id)
+        .name("bucket", &bucket)
+        .name("destination", &dest_prefix)
+        .field("files_selected", keys.len())
+        .field("folders_selected", prefixes.len());
+    logged(
+        act,
+        move_preview_inner(
+            &state,
+            connection_id,
+            bucket,
+            keys,
+            prefixes,
+            dest_prefix,
+            rename,
+        ),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn move_execute(
+    state: State<'_, AppState>,
+    token: String,
+    on_progress: Channel<OpProgress>,
+) -> CmdResult<MoveResult> {
+    let mut act = state.activity.start_action("move");
+    let result = move_execute_inner(&state, token, on_progress).await;
+    if let Ok(r) = &result {
+        act.set("moved", r.moved);
+        act.set("failed", r.failures.len());
+        act.set("copied_not_deleted", r.copied_not_deleted.len());
+        let names: Vec<String> = r
+            .failures
+            .iter()
+            .chain(r.copied_not_deleted.iter())
+            .take(20)
+            .map(|f| format!("{}: {}", state.activity.name(&f.key), f.message))
+            .collect();
+        if !names.is_empty() {
+            act.set("failures", names);
+        }
+    }
+    act.end(&result);
+    result
 }
 
 #[cfg(test)]

@@ -224,6 +224,8 @@ pub struct DownloadStarted {
 pub struct SettingsView {
     pub preferences: Preferences,
     pub download_dir: String,
+    /// Activity log folder, with the home folder shown as `~`.
+    pub activity_dir: String,
     pub credential_store: String,
     pub credential_store_available: bool,
 }

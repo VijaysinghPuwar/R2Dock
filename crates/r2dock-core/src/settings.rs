@@ -78,6 +78,12 @@ pub struct Preferences {
     pub log_level: LogLevel,
     pub include_hidden_os_files: bool,
     pub rename_notice_seen: bool,
+    /// Record user actions and their results in the activity log.
+    pub activity_log: bool,
+    /// Write bucket, folder, and file names in the activity log instead of hashes.
+    pub activity_include_names: bool,
+    /// Days to keep activity log files.
+    pub activity_days: u32,
 }
 
 impl Default for Preferences {
@@ -101,6 +107,9 @@ impl Default for Preferences {
             log_level: LogLevel::Standard,
             include_hidden_os_files: false,
             rename_notice_seen: false,
+            activity_log: true,
+            activity_include_names: false,
+            activity_days: 14,
         }
     }
 }
@@ -112,6 +121,7 @@ impl Preferences {
         self.history_days = self.history_days.clamp(1, 365);
         self.multipart_threshold_mib = self.multipart_threshold_mib.clamp(16, 4096);
         self.typed_confirm_threshold = self.typed_confirm_threshold.clamp(1, 10_000);
+        self.activity_days = self.activity_days.clamp(1, 365);
         self
     }
 }
@@ -125,6 +135,9 @@ pub struct SettingsFile {
     /// Absolute download folder chosen with the folder picker. `None` means
     /// the system Downloads folder.
     pub download_dir: Option<std::path::PathBuf>,
+    /// Activity log folder chosen with the folder picker. `None` means the
+    /// `activity` folder inside the app's log folder.
+    pub activity_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for SettingsFile {
@@ -133,6 +146,7 @@ impl Default for SettingsFile {
             version: SETTINGS_VERSION,
             preferences: Preferences::default(),
             download_dir: None,
+            activity_dir: None,
         }
     }
 }
@@ -162,6 +176,9 @@ mod tests {
         assert_eq!(p.typed_confirm_threshold, 50);
         assert_eq!(p.history_days, 30);
         assert_eq!(p.theme, Theme::Dark);
+        assert!(p.activity_log);
+        assert!(!p.activity_include_names, "names are private by default");
+        assert_eq!(p.activity_days, 14);
     }
 
     #[test]

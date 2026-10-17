@@ -137,6 +137,11 @@ export const settingsChooseDownloadDir = () => invoke<SettingsView>("settings_ch
 export const settingsReset = () => invoke<SettingsView>("settings_reset");
 export const historyClear = () => invoke<void>("history_clear");
 export const openLogFolder = () => invoke<void>("open_log_folder");
+export const settingsChooseActivityDir = () => invoke<SettingsView>("settings_choose_activity_dir");
+export const openActivityFolder = () => invoke<void>("open_activity_folder");
+/** Record a problem seen by the interface in the activity log (best effort, never throws). */
+export const activityNote = (kind: string, message: string) =>
+  invoke<void>("activity_note", { kind, message }).catch(() => undefined);
 
 // System
 export const clipboardWrite = (text: string) => invoke<void>("clipboard_write", { text });

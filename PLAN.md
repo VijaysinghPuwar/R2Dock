@@ -595,6 +595,7 @@ Downloads:
 - Local paths logged with the home directory replaced by `~`; object keys logged only at debug level.
 - Logs rotate (5 files, 5 MB each) in the platform log directory.
 - A test asserts that a known fake secret never appears in captured logs or error DTOs.
+- **Activity log** (separate from the diagnostic log): one JSON line per user action and result in `activity-YYYY-MM-DD.jsonl`, in `<logs>/activity` or a folder chosen with the folder picker. It records action names, counts, durations, error codes, messages, and R2 request IDs. It never records secrets, command arguments, clipboard text, or link paths. Bucket names, keys, and file names are written as short stable hashes unless the user enables names. Lines pass through the same redaction filter and are written on a background thread. Files older than the retention setting (default 14 days) are deleted at startup.
 
 ### 9.8 Threat model
 

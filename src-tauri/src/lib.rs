@@ -2,6 +2,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod activity;
 pub mod commands;
 pub mod connections;
 mod dialogs;
@@ -83,6 +84,32 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let _guard = runtime.inner().enter();
         Engine::start(Arc::new(EngineClients(connections.clone())), config)
     };
+    let activity_dir = settings
+        .activity_dir
+        .clone()
+        .unwrap_or_else(|| paths.logs.join("activity"));
+    let activity = activity::ActivityLog::start(
+        activity_dir,
+        settings.preferences.activity_log,
+        settings.preferences.activity_include_names,
+    );
+    {
+        let mut fields = serde_json::Map::new();
+        fields.insert(
+            "version".into(),
+            app.package_info().version.to_string().into(),
+        );
+        fields.insert("os".into(), std::env::consts::OS.into());
+        fields.insert("arch".into(), std::env::consts::ARCH.into());
+        fields.insert(
+            "credential_store".into(),
+            credential_store_label.clone().into(),
+        );
+        activity.event("app_start", fields);
+    }
+    let activity_days = settings.preferences.activity_days;
+    let trim_activity = activity.clone();
+    tauri::async_runtime::spawn_blocking(move || trim_activity.trim(activity_days));
     let history_days = settings.preferences.history_days;
     let trim = engine.clone();
     tauri::async_runtime::spawn_blocking(move || trim.trim_history(history_days));
@@ -98,6 +125,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         moves: Registry::default(),
         media: media::MediaRegistry::default(),
         credential_store_label,
+        activity,
     });
     app.manage(LogHandle(log));
 
@@ -171,6 +199,9 @@ pub fn run() {
             commands::settings::settings_choose_download_dir,
             commands::settings::settings_reset,
             commands::settings::history_clear,
+            commands::settings::settings_choose_activity_dir,
+            commands::settings::open_activity_folder,
+            commands::settings::activity_note,
         ]);
 
     let app = match builder.build(tauri::generate_context!()) {

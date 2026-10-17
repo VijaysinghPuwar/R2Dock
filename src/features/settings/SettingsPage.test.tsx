@@ -28,6 +28,7 @@ function baseView(): SettingsView {
   return {
     preferences: { ...DEFAULT_PREFERENCES },
     downloadDir: "~/Downloads",
+    activityDir: "~/Library/Logs/app.r2dock.desktop/activity",
     credentialStore: "macOS Keychain",
     credentialStoreAvailable: true,
   };
@@ -103,5 +104,17 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(connectionRemove).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("Activity log settings", () => {
+  it("shows the activity log folder and keeps names off by default", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(await screen.findByText("~/Library/Logs/app.r2dock.desktop/activity")).toBeInTheDocument();
+    const names = screen.getByRole("switch", { name: /Include file and folder names/ });
+    expect(names).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("switch", { name: /^Activity log/ })).toHaveAttribute("aria-checked", "true");
   });
 });

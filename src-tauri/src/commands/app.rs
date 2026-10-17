@@ -31,7 +31,22 @@ pub fn app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInfo {
 }
 
 #[tauri::command]
-pub fn clipboard_write(app: tauri::AppHandle, text: String) -> CmdResult<()> {
+pub fn clipboard_write(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    text: String,
+) -> CmdResult<()> {
+    // The copied text itself is never recorded.
+    let act = state
+        .activity
+        .start_action("copy_to_clipboard")
+        .field("length", text.len());
+    let result = clipboard_write_inner(&app, text);
+    act.end(&result);
+    result
+}
+
+fn clipboard_write_inner(app: &tauri::AppHandle, text: String) -> CmdResult<()> {
     if text.len() > MAX_CLIPBOARD {
         return Err(AppError::invalid_input("Text is too long to copy."));
     }
@@ -42,7 +57,24 @@ pub fn clipboard_write(app: tauri::AppHandle, text: String) -> CmdResult<()> {
 
 /// Open an https link in the default browser. Other schemes are refused.
 #[tauri::command]
-pub fn open_external(app: tauri::AppHandle, url: String) -> CmdResult<()> {
+pub fn open_external(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+) -> CmdResult<()> {
+    // Only the host is recorded, never the path or query.
+    let host = url
+        .strip_prefix("https://")
+        .and_then(|r| r.split('/').next())
+        .unwrap_or("")
+        .to_string();
+    let act = state.activity.start_action("open_link").field("host", host);
+    let result = open_external_inner(&app, url);
+    act.end(&result);
+    result
+}
+
+fn open_external_inner(app: &tauri::AppHandle, url: String) -> CmdResult<()> {
     let ok = url.starts_with("https://")
         && url.len() < 4096
         && !url.chars().any(|c| c.is_control() || c.is_whitespace());

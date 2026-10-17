@@ -29,7 +29,7 @@ function open(p: UploadPlan = plan) {
   act(() => {
     useUploadStore.getState().setReview({
       plan: p,
-      target: { connectionId: "c1", connectionName: "Personal R2", bucket: "webaudiotv-media", prefix: "Audiobook G/" },
+      target: { connectionId: "c1", connectionName: "Personal R2", bucket: "media-library", prefix: "Audiobook G/" },
       selection: { id: "sel-1", count: 214, names: ["a"] },
     });
   });
