@@ -4066,7 +4066,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "r2dock"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "directories",
@@ -4103,7 +4103,7 @@ dependencies = [
 
 [[package]]
 name = "r2dock-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "hex",
@@ -4121,7 +4121,7 @@ dependencies = [
 
 [[package]]
 name = "r2dock-media"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "fs4",
  "hex",
@@ -4142,7 +4142,7 @@ dependencies = [
 
 [[package]]
 name = "r2dock-r2"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aws-sdk-s3",
  "aws-smithy-runtime-api",
@@ -4163,7 +4163,7 @@ dependencies = [
 
 [[package]]
 name = "r2dock-secrets"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "keyring",
  "parking_lot",
@@ -4175,7 +4175,7 @@ dependencies = [
 
 [[package]]
 name = "r2dock-testkit"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hyper-util",
  "s3s",
@@ -4186,7 +4186,7 @@ dependencies = [
 
 [[package]]
 name = "r2dock-transfer"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aws-sdk-s3",
  "aws-smithy-types",

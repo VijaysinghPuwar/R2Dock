@@ -2,6 +2,15 @@
 
 All notable changes are listed here. The format follows Keep a Changelog, and the project uses Semantic Versioning.
 
+## [0.4.0] - 2026-10-17
+
+### Added
+
+- Video compression (Settings > Compression): AV1 by default, about a third of the size of a typical H.264 video at the same quality (measured VMAF above 96), or "Most compatible (H.264)" with the computer's hardware encoder (VideoToolbox, NVIDIA, Intel, AMD, Windows, VAAPI) and OpenH264 as fallback. Video size: 720p, 1080p (default), keep, or off.
+- Every audio track, text subtitles, chapters, tags, rotation, and variable frame rate are kept. HDR video, image subtitles, and unknown data tracks are left unchanged. MOV and MKV become MP4.
+- The upload review counts audio files and videos; transfer rows give video reasons such as "Already efficient (HEVC)" or "HDR video kept as is".
+- The macOS compression tools now include SVT-AV1 (tools build 2, about 20 MB).
+
 ## [0.3.0] - 2026-10-17
 
 ### Added
