@@ -565,6 +565,7 @@ fn env_num(name: &str, default: u64) -> u64 {
 }
 
 /// FFmpeg children of this process: (count, total CPU percent, threads).
+#[cfg(unix)]
 fn ffmpeg_load() -> (usize, f64, usize) {
     let me = std::process::id().to_string();
     let Ok(out) = Command::new("ps")
