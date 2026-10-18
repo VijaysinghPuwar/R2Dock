@@ -45,14 +45,27 @@ describe("compression notices", () => {
   it("says the file was skipped when the Skip the file setting stopped it", () => {
     const { shown, notices } = setup();
     const job = makeJob({ id: "a", name: "intro.wav", state: "compressing", compression: { kind: "failed", message: "x" } });
+    const error = { code: "internal" as const, message: "Compression failed: x", detail: null, retryable: false };
     notices.note(job);
-    notices.note({ ...job, state: "failed" });
-    notices.note(makeJob({ id: "b", name: "b.wav", state: "failed", compression: { kind: "failed", message: "x" } }));
+    notices.note({ ...job, state: "failed", error });
+    notices.note(makeJob({ id: "b", name: "b.wav", state: "failed", error, compression: { kind: "failed", message: "x" } }));
     vi.advanceTimersByTime(NOTICE_BATCH_MS);
     expect(shown).toEqual(["2 files couldn't be compressed, so they were skipped as set in Settings > Compression."]);
-    notices.note(makeJob({ id: "c", name: "c.wav", state: "failed", compression: { kind: "failed", message: "x" } }));
+    notices.note(makeJob({ id: "c", name: "c.wav", state: "failed", error, compression: { kind: "failed", message: "x" } }));
     vi.advanceTimersByTime(NOTICE_BATCH_MS);
     expect(shown[1]).toBe("Couldn't compress c.wav, so it was skipped as set in Settings > Compression.");
+  });
+
+  it.each(["network", "accessDenied", "internal"] as const)("does not describe an original upload's %s failure as a settings skip", (code) => {
+    const { shown, notices } = setup();
+    const error = { code, message: "Upload failed.", detail: null, retryable: false };
+    const job = makeJob({ id: "a", name: "intro.wav", state: "running", compression: { kind: "failed", message: "x" } });
+    // Cover both a terminal snapshot and an update during the notice delay.
+    notices.note({ ...job, state: "failed", error });
+    notices.note({ ...job, id: "b" });
+    notices.note({ ...job, id: "b", state: "failed", error });
+    vi.advanceTimersByTime(NOTICE_BATCH_MS);
+    expect(shown).toEqual(["2 files can't be compressed. Uploading the originals."]);
   });
 
   it("shows one toast for a batch of files", () => {

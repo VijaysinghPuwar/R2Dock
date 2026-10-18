@@ -24,12 +24,18 @@ function notApplicable(reason: Unchanged): boolean {
   return reason.reason.reason === "videoOff" || reason.reason.reason === "video";
 }
 
+function stoppedByCompression(job: JobSnapshot): boolean {
+  // The engine's failure_error uses Internal with this prefix. Uploads can
+  // fail later for other reasons after falling back to the original.
+  return job.state === "failed" && job.error?.code === "internal" && job.error.message.startsWith("Compression failed:");
+}
+
 function noticeFor(job: JobSnapshot): Notice | null {
   if (job.direction !== "upload") return null;
   const view = job.compression;
   if (!view) return null;
   if (view.kind === "failed") {
-    return { id: job.id, name: job.name, reason: null, stopped: job.state === "failed" };
+    return { id: job.id, name: job.name, reason: null, stopped: stoppedByCompression(job) };
   }
   if (view.kind === "unchanged" && !notApplicable(view.reason)) {
     return { id: job.id, name: job.name, reason: unchangedText(view.reason), stopped: false };
@@ -79,7 +85,7 @@ export function createCompressionNotices(show: (message: string) => void): Compr
         // The job may stop (Skip the file) after compression failed but before
         // the notice is shown; keep the waiting notice accurate.
         const waiting = pending.find((n) => n.id === job.id);
-        if (waiting && waiting.reason === null) waiting.stopped = job.state === "failed";
+        if (waiting && waiting.reason === null) waiting.stopped = stoppedByCompression(job);
         return;
       }
       const notice = noticeFor(job);
