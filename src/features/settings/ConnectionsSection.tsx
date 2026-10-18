@@ -84,6 +84,8 @@ function ConnectionCard({ connection, isActive }: { connection: ConnectionSummar
         secret: null,
         bucket: null,
         jurisdiction: connection.jurisdiction,
+        apiToken: null,
+        removeApiToken: false,
       });
       toast.success(result.message);
       if (result.warning) toast.warning(result.warning);

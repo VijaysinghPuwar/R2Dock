@@ -1,5 +1,5 @@
 use r2dock_core::AppError;
-use r2dock_core::connections::public_url;
+
 use r2dock_core::keys::validate_name;
 use r2dock_r2::dto::{BucketEntry, ListPage, PrefixSize};
 use tauri::State;
@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{CmdResult, bucket_arg, key_arg, logged, prefix_arg, with_client};
-use crate::dto::{ObjectInfo, TextPreview};
+use crate::dto::{ObjectInfo, PublicLink, TextPreview};
 use crate::media::MediaTarget;
 use crate::state::AppState;
 
@@ -146,20 +146,46 @@ async fn object_head_inner(
 ) -> CmdResult<ObjectInfo> {
     let bucket = bucket_arg(&bucket)?;
     let key = key_arg(&key)?;
-    let b = bucket.clone();
-    let k = key.clone();
     let details = with_client(state, connection_id, |c| async move {
-        c.head_object(&b, &k).await
+        c.head_object(&bucket, &key).await
     })
     .await?;
-    let public = state
-        .connections
-        .public_base_url(connection_id, &bucket)
-        .map(|base| public_url(&base, &key));
-    Ok(ObjectInfo {
-        details,
-        public_url: public,
-    })
+    Ok(ObjectInfo { details })
+}
+
+/// The public link for an object: the bucket's manual public base URL, else
+/// a custom domain or `r2.dev` domain found with the optional API token.
+/// May call the Cloudflare API (cached briefly). The link itself is never
+/// written to the activity log.
+#[tauri::command]
+pub async fn object_public_url(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    bucket: String,
+    key: String,
+) -> CmdResult<PublicLink> {
+    let mut act = state
+        .activity
+        .start_action("public_link")
+        .connection(connection_id)
+        .name("key", &key);
+    let result = async {
+        let bucket = bucket_arg(&bucket)?;
+        let key = key_arg(&key)?;
+        state
+            .public_links
+            .resolve(&state.connections, connection_id, &bucket, &key)
+            .await
+    }
+    .await;
+    if let Ok(link) = &result {
+        act.set("status", format!("{:?}", link.status));
+        if let Some(source) = link.source {
+            act.set("source", format!("{source:?}"));
+        }
+    }
+    act.end(&result);
+    result
 }
 
 #[tauri::command]

@@ -12,4 +12,13 @@ id: string | null, name: string, accountId: string, accessKeyId: string,
 /**
  * Required for new connections. When editing, `None` keeps the stored secret.
  */
-secret: string | null, bucket: string | null, jurisdiction: Jurisdiction, };
+secret: string | null, bucket: string | null, jurisdiction: Jurisdiction, 
+/**
+ * Optional Cloudflare API token, sent only when typed. `None` keeps the
+ * stored token when editing.
+ */
+apiToken: string | null, 
+/**
+ * Delete the stored API token (editing only).
+ */
+removeApiToken: boolean, };

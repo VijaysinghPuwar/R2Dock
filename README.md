@@ -31,7 +31,7 @@ Cloudflare R2 is cheap and fast object storage, but managing it usually means a 
 | **Browse** | Buckets and folders, list and grid views, search, sorting, file details, image/text/audio previews |
 | **Transfer** | Drag-and-drop uploads, parallel multipart uploads for large files, resumable downloads, pause / resume / retry, continues after a restart |
 | **Compress** | Optional: shrinks audio and video before upload (an audiobook at 64 kbps becomes half the size; a 1080p web video about a third, as AV1); files that would not get smaller upload unchanged |
-| **Manage** | New folder, rename, move, delete with confirmation, copy key or public link |
+| **Manage** | New folder, rename, move, delete with confirmation, copy key or public link (custom domain or r2.dev found with an optional API token) |
 | **Secure** | Keys in the OS keychain, strict app sandbox, safe local file handling |
 | **Logs** | Activity log as CSV (opens in Excel, Numbers, Google Sheets), names hidden by default, export by date range |
 | **Comfortable** | Dark and light themes, keyboard shortcuts, accessible controls |
@@ -56,7 +56,7 @@ Cloudflare R2 is cheap and fast object storage, but managing it usually means a 
 
 1. **Install** the file for your computer from the [latest release](https://github.com/VijaysinghPuwar/R2Dock/releases/latest): `macOS-Apple-Silicon.dmg` for Macs with an M chip, `macOS-Intel.dmg` for Intel Macs, `Windows-Setup.exe`, or `Linux.AppImage` / `Linux.deb`.
 2. **Create an R2 API token** in the Cloudflare dashboard: *R2 → Manage API tokens*. Copy the Account ID, Access Key ID, and Secret Access Key.
-3. **Connect** in R2Dock. With an *Object Read & Write* token, also type your bucket names (comma separated), because these tokens cannot list buckets.
+3. **Connect** in R2Dock. With an *Object Read & Write* token, also type your bucket names (comma separated), because these tokens cannot list buckets. Optionally paste the *Token value* of a token that can read bucket settings (such as *Admin Read*) as the API token, so file details show the custom domain link (R2Dock then also contacts `api.cloudflare.com`, read-only).
 
 > Builds are not code signed yet. On Windows choose *More info → Run anyway*; on macOS right-click the app and choose *Open*.
 

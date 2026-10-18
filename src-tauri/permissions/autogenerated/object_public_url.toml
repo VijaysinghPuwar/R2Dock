@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-object-public-url"
+description = "Enables the object_public_url command without any pre-configured scope."
+commands.allow = ["object_public_url"]
+
+[[permission]]
+identifier = "deny-object-public-url"
+description = "Denies the object_public_url command without any pre-configured scope."
+commands.deny = ["object_public_url"]

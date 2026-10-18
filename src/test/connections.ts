@@ -15,6 +15,7 @@ export function makeConnection(overrides: Partial<ConnectionSummary> = {}): Conn
     manualBuckets: [],
     favoriteBuckets: [],
     publicBaseUrls: {},
+    hasApiToken: false,
     lastTestedAt: null,
     active: false,
     ...overrides,

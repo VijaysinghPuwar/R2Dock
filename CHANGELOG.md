@@ -2,6 +2,17 @@
 
 All notable changes are listed here. The format follows Keep a Changelog, and the project uses Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- File details show the object's public link by source, like the Cloudflare dashboard: "Public URL" (set in Bucket settings), "Custom domain", or "r2.dev", with copy and open buttons. Custom and r2.dev domains are found through an optional API token (the *Token value* of an R2 token) entered in the connection form. The token is kept in the system keychain like the secret, and R2Dock then also contacts `api.cloudflare.com` (read-only, only when a file's details or public link are requested). "Copy public URL" uses the same link.
+
+### Fixed
+
+- A new session-only secret is only used once the connection settings are saved, together with dropping the old client, so a request can never mix old and new keys.
+- A keychain entry left behind by a failed save, whose deletion also failed, is now recorded in a small side file so it is still deleted after a restart.
+
 ## [0.4.1] - 2026-10-18
 
 Tested end to end on Windows 11 against a local S3 server, with stress runs of 3,000 files (1.3 GB) and UI runs of 2,000 transfers.

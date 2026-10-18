@@ -23,13 +23,13 @@ import {
   downloadRows,
   moveRows,
   openRow,
-  publicUrlFor,
   renameRow,
   showDetails,
   showInFolder,
   type ExplorerContext,
 } from "./actions";
 import type { SelectableRow } from "./rows";
+import { mayHavePublicLink } from "../preview/publicLink";
 
 export interface MenuTarget {
   /** Rows the menu acts on (empty for the empty-area menu). */
@@ -135,7 +135,7 @@ export function ExplorerContextMenu({
     );
   }
 
-  const hasPublic = publicUrlFor(ctx, first.entry.key) !== null;
+  const hasPublic = mayHavePublicLink(ctx.connection, ctx.bucket);
   return (
     <>
       <ContextMenuItem icon={<Eye size={16} />} shortcut="Space" onSelect={() => openRow(ctx, first)}>
@@ -154,7 +154,7 @@ export function ExplorerContextMenu({
         Copy key
       </ContextMenuItem>
       {hasPublic && (
-        <ContextMenuItem icon={<Link size={16} />} onSelect={() => copyPublicUrl(ctx, first)}>
+        <ContextMenuItem icon={<Link size={16} />} onSelect={() => void copyPublicUrl(ctx, first)}>
           Copy public URL
         </ContextMenuItem>
       )}

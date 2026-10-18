@@ -38,6 +38,7 @@ export const qk = {
   objects: (connectionId: string, bucket: string, prefix: string) => ["objects", connectionId, bucket, prefix] as const,
   search: (connectionId: string, bucket: string, prefix: string) => ["search", connectionId, bucket, prefix] as const,
   head: (connectionId: string, bucket: string, key: string) => ["head", connectionId, bucket, key] as const,
+  publicLink: (connectionId: string, bucket: string, key: string) => ["publicLink", connectionId, bucket, key] as const,
   prefixSize: (connectionId: string, bucket: string, prefix: string) => ["prefixSize", connectionId, bucket, prefix] as const,
   media: (connectionId: string, bucket: string, key: string) => ["media", connectionId, bucket, key] as const,
   text: (connectionId: string, bucket: string, key: string) => ["text", connectionId, bucket, key] as const,

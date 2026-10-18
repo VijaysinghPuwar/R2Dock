@@ -49,7 +49,15 @@ pub async fn connection_save(
             "new_secret",
             input.secret.as_deref().is_some_and(|s| !s.is_empty()),
         )
-        .field("buckets_entered", bucket_count(&input));
+        .field("buckets_entered", bucket_count(&input))
+        .field(
+            "new_api_token",
+            input
+                .api_token
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty()),
+        )
+        .field("remove_api_token", input.remove_api_token);
     logged(act, state.connections.save(&input)).await
 }
 

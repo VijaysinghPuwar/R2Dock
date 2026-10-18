@@ -7,4 +7,9 @@ export type ConnectionSummary = { id: string, name: string, accountId: string, a
 /**
  * Shortened access key id, never the full value.
  */
-accessKeyHint: string, jurisdiction: Jurisdiction, secretStorage: SecretStorage, status: ConnectionStatus, bucketScoped: boolean, manualBuckets: Array<string>, favoriteBuckets: Array<string>, publicBaseUrls: { [key in string]: string }, lastTestedAt: string | null, active: boolean, };
+accessKeyHint: string, jurisdiction: Jurisdiction, secretStorage: SecretStorage, status: ConnectionStatus, bucketScoped: boolean, manualBuckets: Array<string>, favoriteBuckets: Array<string>, publicBaseUrls: { [key in string]: string }, 
+/**
+ * True when an optional Cloudflare API token is saved. The token itself
+ * is never returned.
+ */
+hasApiToken: boolean, lastTestedAt: string | null, active: boolean, };

@@ -446,7 +446,10 @@ Content for a file (top to bottom):
    - Key: monospace, wraps, with copy button
    - ETag: monospace, truncated with copy button, info icon tooltip: "Identifies this version of the object. It is not always an MD5 hash of the file. Files uploaded in parts have a different format."
    - Custom metadata: collapsible section, shown only if present.
-5. Public URL row: shown only when a public base URL is configured for this bucket. Otherwise a muted line: "No public URL configured. Set one in Bucket settings."
+5. Public link row, labelled by its source like the Cloudflare dashboard: "Public URL" (set in Bucket settings, always wins), "Custom domain" (found with the connection's optional API token), or "r2.dev" (managed domain, when enabled). Value in monospace with a copy button and an "Open in browser" icon button (`ExternalLink`). A one-line skeleton shows while it is looked up. Otherwise a muted line ending in a "Bucket settings" link:
+   - No API token: "No public URL configured. Add an API token to the connection to find custom domains, or set one in Bucket settings."
+   - Token refused (401/403): "The saved API token cannot read this bucket's domains (an Admin Read token can). You can also set a public URL in Bucket settings." This is a hint, never an error toast.
+   - No enabled domain, token removed outside the app, or the API cannot be reached: a similar one-line hint.
 
 For a folder: name, "Folder (key prefix)", key prefix in monospace, "Size not calculated" with Calculate button, actions Open, Download folder, Delete.
 
@@ -496,6 +499,7 @@ Fields:
 | Access Key ID | Text, monospace | None | Required |
 | Secret Access Key | Password with show/hide toggle (`Eye`/`EyeOff`) | Lock icon + "Saved in your system keychain" | Required |
 | Bucket (optional) | Text or dropdown | Tooltip: "Needed if your key is limited to certain buckets." | Optional |
+| API token (optional) | Password with show/hide toggle, same as the secret | "Lets R2Dock find your buckets' custom domains. Shown as Token value when you create the R2 token." | Optional; printable characters only |
 | Jurisdiction (under "Advanced", collapsed) | Select: Default, EU, FedRAMP | Tooltip only | Default "Default" |
 
 Callout box (`info.subtle`, `Info` icon):
@@ -505,6 +509,7 @@ Callout box (`info.subtle`, `Info` icon):
 Secret field behavior:
 - Masked by default. Show/hide toggle has an accessible label ("Show secret", "Hide secret").
 - After saving, the secret is never displayed again. Editing a connection later shows "Stored in keychain" with a "Replace secret" button.
+- The API token follows the same rules. When one is saved, editing shows "Stored in keychain" with "Replace token" and "Remove token" (then "Removed when you save" with "Keep token").
 - Paste is allowed. Copy from the field is disabled when masked.
 
 Actions (footer, right aligned): **Cancel** (ghost), **Test connection** (secondary), **Save connection** (primary). Save runs a test first if one has not passed.
@@ -699,7 +704,7 @@ Supported previews (prototype should show each):
 
 Details panel: objects R2Dock compressed show a "Compressed" row, "From 660 MB (mp3-32k)", read from the object metadata `r2dock-original-size` and `r2dock-compression`.
 
-Never show "Open in browser" unless a public URL is configured. Do not assume objects are public.
+Never show "Open in browser" unless a public link is known (a configured public URL or a domain found through the API token). Do not assume objects are public.
 
 ### Screen 7: Settings (`SettingsPage`)
 
@@ -708,7 +713,7 @@ Layout: left sub-navigation (200 px) and content area (max 720 px). Sections and
 **Connections**
 - List of connections: name, account ID (shortened), jurisdiction, status, "Last tested 2 days ago". Actions: Test, Edit, Replace secret, Remove.
 - Remove confirmation: "Remove Personal R2? Its keys will be deleted from your system keychain. Your files in R2 are not affected."
-- Per-bucket settings (reachable from a connection): Public base URL (example placeholder: `https://media.example.com`), used only to build "Copy public URL".
+- Per-bucket settings (reachable from a connection): Public base URL (example placeholder: `https://media.example.com`), used only to build "Copy public URL". It overrides any custom domain found through the API token.
 - Button: "Add connection".
 
 **Appearance**
@@ -889,7 +894,7 @@ NavItem: 32 px tall, padding 0 10 px, radius `radius.sm`, 16 px icon, gap 10 px.
 - Destructive items in `danger.default`, placed last after a separator.
 - Disabled items show a tooltip explaining why ("Read-only key").
 
-File context menu items: Open / Preview, Download, separator, Copy key, Copy public URL (only when configured), separator, Rename, Move to..., separator, Details, separator, Delete.
+File context menu items: Open / Preview, Download, separator, Copy key, Copy public URL (only when a public URL is configured or the connection has an API token; the link is resolved like the Details panel), separator, Rename, Move to..., separator, Details, separator, Delete.
 
 Empty-area context menu: Upload files, Upload folder, New folder, Refresh, Paste key path (navigate to a typed prefix).
 

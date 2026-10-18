@@ -63,6 +63,7 @@ function connection(): ConnectionSummary {
     manualBuckets: [],
     favoriteBuckets: [],
     publicBaseUrls: {},
+    hasApiToken: false,
     lastTestedAt: null,
     active: true,
   };

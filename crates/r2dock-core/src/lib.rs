@@ -13,6 +13,7 @@ pub mod keys;
 pub mod parts;
 pub mod path_guard;
 pub mod policy;
+pub mod public_domain;
 pub mod redact;
 pub mod settings;
 pub mod storage;

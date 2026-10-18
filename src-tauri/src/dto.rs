@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use r2dock_core::connections::Jurisdiction;
 use r2dock_core::policy::ConflictPolicy;
+use r2dock_core::public_domain::PublicLinkSource;
 use r2dock_core::settings::Preferences;
 use r2dock_r2::dto::{BucketEntry, KeyFailure, ObjectDetails};
 use r2dock_transfer::scan::SkippedItem;
@@ -72,6 +73,9 @@ pub struct ConnectionSummary {
     pub manual_buckets: Vec<String>,
     pub favorite_buckets: Vec<String>,
     pub public_base_urls: BTreeMap<String, String>,
+    /// True when an optional Cloudflare API token is saved. The token itself
+    /// is never returned.
+    pub has_api_token: bool,
     pub last_tested_at: Option<String>,
     pub active: bool,
 }
@@ -90,6 +94,11 @@ pub struct ConnectionInput {
     pub secret: Option<String>,
     pub bucket: Option<String>,
     pub jurisdiction: Jurisdiction,
+    /// Optional Cloudflare API token, sent only when typed. `None` keeps the
+    /// stored token when editing.
+    pub api_token: Option<String>,
+    /// Delete the stored API token (editing only).
+    pub remove_api_token: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -109,8 +118,34 @@ pub struct TestResult {
 #[ts(export)]
 pub struct ObjectInfo {
     pub details: ObjectDetails,
-    /// Built from the bucket's configured public base URL, if any.
-    pub public_url: Option<String>,
+}
+
+/// Whether a public link was found, and if not, why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PublicLinkStatus {
+    Found,
+    /// No public base URL and no API token to look one up.
+    NotConfigured,
+    /// The API token works but the bucket has no enabled public domain.
+    NoDomain,
+    /// The API token was refused or may not read bucket settings.
+    TokenDenied,
+    /// The saved API token is gone from the credential store.
+    TokenMissing,
+    /// The Cloudflare API could not be reached or answered unexpectedly.
+    Unavailable,
+}
+
+/// The public link for one object, resolved in Rust.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PublicLink {
+    pub url: Option<String>,
+    pub source: Option<PublicLinkSource>,
+    pub status: PublicLinkStatus,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

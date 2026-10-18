@@ -122,6 +122,7 @@ pub struct AppState {
     pub credential_store_label: String,
     pub activity: Arc<crate::activity::ActivityLog>,
     pub compression: crate::compression::CompressionService,
+    pub public_links: crate::public_links::PublicLinks,
 }
 
 impl AppState {

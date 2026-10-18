@@ -1,4 +1,5 @@
-import { clipboardWrite, errorMessage } from "../../ipc/commands";
+import { clipboardWrite, errorMessage, objectPublicUrl } from "../../ipc/commands";
+import { publicLinkHint } from "../preview/publicLink";
 import type { ConnectionSummary } from "../../ipc/bindings/ConnectionSummary";
 import type { ObjectEntry } from "../../ipc/bindings/ObjectEntry";
 import { toast } from "../../components/toastStore";
@@ -102,21 +103,16 @@ export function copyKeys(rows: SelectableRow[]) {
   void copy(text, rows.length === 1 ? "Key copied." : `${rows.length} keys copied.`);
 }
 
-/** Public URL built from the configured base URL. Display helper only. */
-export function publicUrlFor(ctx: ExplorerContext, key: string): string | null {
-  const base = ctx.connection.publicBaseUrls[ctx.bucket];
-  if (!base) return null;
-  const encoded = key
-    .split("/")
-    .map((part) => encodeURIComponent(part))
-    .join("/");
-  return `${base.replace(/\/+$/, "")}/${encoded}`;
-}
-
-export function copyPublicUrl(ctx: ExplorerContext, row: SelectableRow) {
+/** Copy the object's public link as resolved in Rust (manual URL, custom domain, or r2.dev). */
+export async function copyPublicUrl(ctx: ExplorerContext, row: SelectableRow) {
   if (row.kind !== "file") return;
-  const url = publicUrlFor(ctx, row.entry.key);
-  if (url) void copy(url, "Public URL copied.");
+  try {
+    const link = await objectPublicUrl(ctx.connection.id, ctx.bucket, row.entry.key);
+    if (link.url) await copy(link.url, "Public URL copied.");
+    else toast.neutral(`${publicLinkHint(link.status)} Bucket settings.`);
+  } catch (e) {
+    toast.danger(errorMessage(e));
+  }
 }
 
 export function copyCurrentPath(ctx: ExplorerContext) {

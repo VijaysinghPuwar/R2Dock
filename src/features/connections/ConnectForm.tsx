@@ -64,6 +64,10 @@ export function ConnectForm({
   const [changeAccessKey, setChangeAccessKey] = useState(!editing);
   const [secret, setSecret] = useState("");
   const [secretOpen, setSecretOpen] = useState(!editing || replaceSecret || existing?.secretStorage === "missing");
+  // Optional Cloudflare API token: same handling as the secret (local state only, cleared after save).
+  const [apiToken, setApiToken] = useState("");
+  const [apiTokenOpen, setApiTokenOpen] = useState(!existing?.hasApiToken);
+  const [removeApiToken, setRemoveApiToken] = useState(false);
   const [bucket, setBucket] = useState("");
   const bucketRef = useRef<HTMLInputElement>(null);
   const [jurisdiction, setJurisdiction] = useState<Jurisdiction>(existing?.jurisdiction ?? "default");
@@ -98,6 +102,9 @@ export function ConnectForm({
     secret: secretOpen ? secret : null,
     bucket: bucket.trim() || null,
     jurisdiction,
+    // Null keeps the stored token (or means none was entered).
+    apiToken: apiTokenOpen && apiToken.trim() ? apiToken : null,
+    removeApiToken,
   });
 
   const fail = (e: unknown) => {
@@ -138,8 +145,11 @@ export function ConnectForm({
     } catch (e) {
       fail(e);
     } finally {
-      // Clear the secret once it has been saved.
-      if (saved) setSecret("");
+      // Clear the secret and the API token once they have been saved.
+      if (saved) {
+        setSecret("");
+        setApiToken("");
+      }
       setBusy(null);
     }
     if (saved) await onSaved(saved);
@@ -256,6 +266,44 @@ export function ConnectForm({
         onChange={(e) => touch(setBucket)(e.target.value)}
         disabled={working}
       />
+
+      {apiTokenOpen ? (
+        <SecretField
+          label="API token (optional)"
+          value={apiToken}
+          onChange={setApiToken}
+          helper="Lets R2Dock find your buckets' custom domains. Shown as Token value when you create the R2 token."
+          disabled={working}
+        />
+      ) : (
+        <div className="field">
+          <span className="field-label">API token (optional)</span>
+          <div className="stored-row">
+            <span className="secondary">
+              <Lock size={12} aria-hidden="true" />{" "}
+              {removeApiToken
+                ? "Removed when you save"
+                : existing?.secretStorage === "session"
+                  ? "Kept for this session"
+                  : "Stored in keychain"}
+            </span>
+            {removeApiToken ? (
+              <Button size="sm" variant="ghost" onClick={() => setRemoveApiToken(false)} disabled={working}>
+                Keep token
+              </Button>
+            ) : (
+              <>
+                <Button size="sm" variant="ghost" onClick={() => setApiTokenOpen(true)} disabled={working}>
+                  Replace token
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setRemoveApiToken(true)} disabled={working}>
+                  Remove token
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="advanced">
         <button type="button" className="disclosure" aria-expanded={advanced} onClick={() => setAdvanced((v) => !v)}>

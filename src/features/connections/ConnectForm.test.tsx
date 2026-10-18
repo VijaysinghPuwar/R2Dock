@@ -31,6 +31,7 @@ const summary: ConnectionSummary = {
   manualBuckets: [],
   favoriteBuckets: [],
   publicBaseUrls: {},
+  hasApiToken: false,
   lastTestedAt: null,
   active: true,
 };
@@ -165,6 +166,54 @@ describe("ConnectForm", () => {
     await user.click(screen.getByRole("button", { name: "Save connection" }));
     expect(screen.getByText("Paste the new Secret Access Key.")).toBeInTheDocument();
     expect(commands.connectionSave).not.toHaveBeenCalled();
+  });
+
+  it("sends the optional API token with save and clears it afterwards", async () => {
+    const user = userEvent.setup();
+    const TOKEN = "fake-api-token-for-test";
+    commands.connectionSave.mockResolvedValue(summary);
+    const onSaved = renderNew();
+    await fillNew(user);
+    const tokenInput = screen.getByLabelText("API token (optional)") as HTMLInputElement;
+    expect(screen.getByText(/Shown as Token value when you create the R2 token/)).toBeInTheDocument();
+    await user.type(tokenInput, TOKEN);
+
+    await user.click(screen.getByRole("button", { name: "Save connection" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(summary));
+    const input = commands.connectionSave.mock.calls[0]?.[0] as ConnectionInput;
+    expect(input.apiToken).toBe(TOKEN);
+    expect(input.removeApiToken).toBe(false);
+    expect(tokenInput.value).toBe("");
+    expect(document.body.textContent ?? "").not.toContain(TOKEN);
+  });
+
+  it("sends a null API token when none is typed", async () => {
+    const user = userEvent.setup();
+    commands.connectionSave.mockResolvedValue(summary);
+    renderNew();
+    await fillNew(user);
+    await user.click(screen.getByRole("button", { name: "Save connection" }));
+    await waitFor(() => expect(commands.connectionSave).toHaveBeenCalled());
+    expect((commands.connectionSave.mock.calls[0]?.[0] as ConnectionInput).apiToken).toBeNull();
+  });
+
+  it("keeps or removes a stored API token in edit mode without showing it", async () => {
+    const user = userEvent.setup();
+    commands.connectionSave.mockResolvedValue(summary);
+    const existing = { ...summary, hasApiToken: true };
+    renderWithProviders(
+      <ConnectForm existing={existing} credentialStoreAvailable onCancel={() => undefined} onSaved={vi.fn()} />,
+    );
+    expect(screen.queryByLabelText("API token (optional)")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Replace token" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Remove token" }));
+    expect(screen.getByText("Removed when you save")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save connection" }));
+    await waitFor(() => expect(commands.connectionSave).toHaveBeenCalled());
+    const input = commands.connectionSave.mock.calls[0]?.[0] as ConnectionInput;
+    expect(input.apiToken).toBeNull();
+    expect(input.removeApiToken).toBe(true);
   });
 
   it("explains session-only storage when the keychain is unavailable", () => {

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, CircleAlert, Download, Ellipsis, FolderInput, FolderOpen, Info, Link, Pencil, Trash2, X } from "lucide-react";
+import { ChevronRight, CircleAlert, Download, Ellipsis, ExternalLink, FolderInput, FolderOpen, Info, Link, Pencil, Trash2, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Button, IconButton } from "../../components/Button";
 import { Skeleton } from "../../components/Controls";
@@ -8,7 +8,9 @@ import { FileIcon } from "../../components/FileIcon";
 import { Menu, MenuItem, MenuSeparator } from "../../components/Menu";
 import { Tooltip } from "../../components/Tooltip";
 import { toast } from "../../components/toastStore";
-import { clipboardWrite, errorMessage, objectHead, prefixSize, previewText } from "../../ipc/commands";
+import { clipboardWrite, errorMessage, objectHead, objectPublicUrl, openExternal, prefixSize, previewText } from "../../ipc/commands";
+import type { PublicLink } from "../../ipc/bindings/PublicLink";
+import { SOURCE_LABEL, mayHavePublicLink, publicLinkHint } from "./publicLink";
 import type { ConnectionSummary } from "../../ipc/bindings/ConnectionSummary";
 import type { ObjectEntry } from "../../ipc/bindings/ObjectEntry";
 import type { PrefixSize } from "../../ipc/bindings/PrefixSize";
@@ -54,6 +56,7 @@ const TEXT_SNIPPET_LIMIT = 256 * 1000;
 
 interface Ctx {
   connectionId: string;
+  connection: ConnectionSummary;
   bucket: string;
   prefix: string;
 }
@@ -154,10 +157,63 @@ function MetaRow({ label, children, info }: { label: string; children: ReactNode
   );
 }
 
+/** The object's public link, resolved in Rust. Only asked for when one can exist. */
+function usePublicLink(ctx: Ctx, key: string) {
+  const enabled = mayHavePublicLink(ctx.connection, ctx.bucket);
+  // The manual URL and token presence are part of the key, so editing either refreshes the link.
+  const base = ctx.connection.publicBaseUrls[ctx.bucket] ?? "";
+  const query = useQuery({
+    queryKey: [...qk.publicLink(ctx.connectionId, ctx.bucket, key), base, ctx.connection.hasApiToken],
+    queryFn: () => objectPublicUrl(ctx.connectionId, ctx.bucket, key),
+    staleTime: 60_000,
+    enabled,
+  });
+  return { enabled, query };
+}
+
+function PublicLinkSection({ ctx, link, loading }: { ctx: Ctx; link: PublicLink | null; loading: boolean }) {
+  const setBucketSettings = useUiStore((s) => s.setBucketSettings);
+  if (loading) {
+    return (
+      <div aria-busy="true" aria-label="Looking for a public link">
+        <Skeleton width="80%" />
+      </div>
+    );
+  }
+  if (link?.url && link.source) {
+    const url = link.url;
+    const label = SOURCE_LABEL[link.source];
+    const open = async () => {
+      try {
+        await openExternal(url);
+      } catch (e) {
+        toast.danger(errorMessage(e));
+      }
+    };
+    return (
+      <dl className="meta-list">
+        <MetaRow label={label}>
+          <span className="meta-value mono selectable">{url}</span>
+          <CopyButton text={url} label={`Copy ${label} link`} />
+          <IconButton label="Open in browser" icon={<ExternalLink size={14} />} size="sm" onClick={() => void open()} />
+        </MetaRow>
+      </dl>
+    );
+  }
+  return (
+    <p className="small muted">
+      {publicLinkHint(link?.status ?? "notConfigured")}{" "}
+      <button type="button" className="link-button" onClick={() => setBucketSettings({ connectionId: ctx.connectionId, bucket: ctx.bucket })}>
+        Bucket settings
+      </button>
+      .
+    </p>
+  );
+}
+
 function FileDetails({ ctx, row }: { ctx: Ctx; row: FileRow }) {
   const entry = row.entry;
   const ops = useOpsStore();
-  const setBucketSettings = useUiStore((s) => s.setBucketSettings);
   const [metaOpen, setMetaOpen] = useState(false);
   const head = useQuery({
     queryKey: qk.head(ctx.connectionId, ctx.bucket, entry.key),
@@ -166,11 +222,16 @@ function FileDetails({ ctx, row }: { ctx: Ctx; row: FileRow }) {
   const info = head.data;
   const details = info?.details;
   const customMeta = details ? Object.entries(details.metadata) : [];
+  const publicLink = usePublicLink(ctx, entry.key);
+  const link: PublicLink | null = publicLink.query.isError
+    ? { url: null, source: null, status: "unavailable" }
+    : (publicLink.query.data ?? null);
+  const publicUrl = link?.url ?? null;
 
   const copyPublicUrl = async () => {
-    if (!info?.publicUrl) return;
+    if (!publicUrl) return;
     try {
-      await clipboardWrite(info.publicUrl);
+      await clipboardWrite(publicUrl);
       toast.success("Public URL copied.");
     } catch (e) {
       toast.danger(errorMessage(e));
@@ -187,7 +248,7 @@ function FileDetails({ ctx, row }: { ctx: Ctx; row: FileRow }) {
         </Button>
         <CopyButton text={entry.key} label="Copy key" size="md" />
         <Menu trigger={<IconButton label="More actions" icon={<Ellipsis size={16} />} />} align="end">
-          {info?.publicUrl && (
+          {publicUrl && (
             <MenuItem icon={<Link size={16} />} onSelect={() => void copyPublicUrl()}>
               Copy public URL
             </MenuItem>
@@ -296,22 +357,7 @@ function FileDetails({ ctx, row }: { ctx: Ctx; row: FileRow }) {
             </div>
           )}
           <div className="details-section">
-            {info.publicUrl ? (
-              <dl className="meta-list">
-                <MetaRow label="Public URL">
-                  <span className="meta-value mono selectable">{info.publicUrl}</span>
-                  <CopyButton text={info.publicUrl} label="Copy public URL" />
-                </MetaRow>
-              </dl>
-            ) : (
-              <p className="small muted">
-                No public URL configured. Set one in{" "}
-                <button type="button" className="link-button" onClick={() => setBucketSettings({ connectionId: ctx.connectionId, bucket: ctx.bucket })}>
-                  Bucket settings
-                </button>
-                .
-              </p>
-            )}
+            <PublicLinkSection ctx={ctx} link={link} loading={publicLink.enabled && publicLink.query.isPending} />
           </div>
         </>
       )}
@@ -392,7 +438,7 @@ function MultiDetails({ ctx, rows }: { ctx: Ctx; rows: SelectableRow[] }) {
 }
 
 export function DetailsPanel({ connection, bucket, prefix, rows, overlay, onClose }: DetailsPanelProps) {
-  const ctx: Ctx = { connectionId: connection.id, bucket, prefix };
+  const ctx: Ctx = { connectionId: connection.id, connection, bucket, prefix };
   const first = rows[0];
   let content;
   if (!first) {

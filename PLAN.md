@@ -134,7 +134,7 @@ Priority: **M** = MVP, **S** = should have for MVP if time allows, **L** = later
 | N9 | Performance | Near-zero CPU when idle with no transfers (no polling loops). |
 | N10 | Usability | A first-time user can connect and upload a file without external docs (validated with at least 3 usability test participants). |
 | N11 | Accessibility | WCAG 2.2 AA targets, full keyboard operation. |
-| N12 | Privacy | No telemetry. Network traffic only to R2 endpoints and the update endpoint (if enabled). |
+| N12 | Privacy | No telemetry. Network traffic only to R2 endpoints, the update endpoint (if enabled), the pinned FFmpeg download (only when the user installs compression tools), and `api.cloudflare.com` (only when the user saved an optional API token and opens a file's details or copies its public link). |
 | N13 | Portability | Windows 10 and 11 (x64, arm64 [Verify]), macOS 12 or later [Verify against Tauri minimum], mainstream Linux (Ubuntu LTS, Fedora) with WebKitGTK. |
 
 ---
@@ -304,6 +304,7 @@ Commands (initial list, names illustrative):
 | `object_list` | connection id, bucket, prefix, continuation token | `ListPage` (folders, objects, next token) |
 | `object_search_prefix` | connection id, bucket, prefix | `ListPage` |
 | `object_head` | connection id, bucket, key | `ObjectDetails` |
+| `object_public_url` | connection id, bucket, key | `PublicLink` (url, source, status; may call the Cloudflare API, cached) |
 | `object_delete` | connection id, bucket, keys or prefix, confirmation token | job id |
 | `object_copy_move` | source, destination, mode | job id |
 | `folder_create` | connection id, bucket, prefix | ok |
@@ -472,6 +473,12 @@ Unclear outcomes keep the source: a copy whose response is lost is reported as f
 
 - The S3 API endpoint always requires signed requests. Public access exists only via r2.dev URLs or custom domains configured in the Cloudflare dashboard.
 - The app cannot reliably know whether a bucket is public using S3 credentials. Users set a **public base URL** per bucket; "Copy public URL" is `base_url + "/" + percent-encoded key`. The app never claims an object is public.
+- **Detected public domains (optional).** A connection may also hold a Cloudflare API token (the "Token value" shown when an R2 token is created). With it, Rust reads the bucket's public domains from the Cloudflare REST API **[Confirmed against the API reference 2026-10-18; not yet tested live]**:
+  - `GET https://api.cloudflare.com/client/v4/accounts/{account_id}/r2/buckets/{bucket_name}/domains/custom` returns `result.domains[]` with `domain`, `enabled`, and `status.ownership` / `status.ssl` (`pending`, `active`, `deactivated`, `blocked`, `error`, `unknown`; ssl also `initializing`).
+  - `GET .../domains/managed` returns `result` with `bucketId`, `domain` (the `pub-<id>.r2.dev` host), and `enabled`.
+  - Both use `Authorization: Bearer <token>` and an optional `cf-r2-jurisdiction` header (`default`, `eu`, `us`, `fedramp`, `fedramp-high`); R2Dock sends `eu` or `fedramp` for those jurisdictions and no header otherwise.
+  - The reference does not list the permission needed. The R2 token page says Admin Read only and Workers R2 Storage Read can "view bucket configuration"; Object Read & Write tokens only work with the S3 API, so for them the lookup is expected to return 403 **[Verify]**.
+- Resolution order for the link shown in Details and copied by "Copy public URL": the manual public base URL (label "Public URL"), else an enabled custom domain, active ones first ("Custom domain"), else the `r2.dev` domain when enabled ("r2.dev"), else a hint. Domain names from the API are accepted only as plain lowercase host names and always used with `https://`. Lookups happen only when the Details panel or the context menu asks (no polling), are cached in memory per connection and bucket (5 minutes when found, 30 seconds after a failure), and the cache is dropped when the connection changes. A 401 or 403 shows a one-line hint in Details, not an error toast.
 - Presigned URLs: GET, HEAD, PUT, DELETE supported, max 7 days, only on the S3 API domain, not custom domains **[Confirmed]**. They are bearer tokens. Planned as a v1.1 feature with explicit expiry choice and warning.
 
 ### 8.10 Integrity
@@ -510,7 +517,7 @@ The exact error codes R2 returns for each case must be captured in Phase 0 again
 
 ### 9.1 Principles
 
-- Every user owns their credentials. The app never sees anything else (no Cloudflare global keys, no passwords).
+- Every user owns their credentials. The app never sees anything else (no Cloudflare global keys, no passwords). The only other credential is an optional R2 API token value, used read-only to find a bucket's public domains (8.9).
 - Secrets enter once (the Connect form), move to Rust, and are stored in the OS credential store. They never return to the frontend.
 - Least privilege is recommended and supported (bucket-scoped tokens work).
 
@@ -524,13 +531,15 @@ The exact error codes R2 returns for each case must be captured in Phase 0 again
 
 Entry naming: service `app.r2dock.credentials` **[Decision]**, account = random UUID per stored secret. The connection config stores only this UUID reference. A new UUID is created when a secret is replaced and the old entry is deleted after the new one is confirmed.
 
-Non-secret connection config (name, account ID, jurisdiction, buckets, public base URLs, secret reference) is stored as JSON in the platform app config directory, written atomically (temp file then rename).
+The optional Cloudflare API token is stored exactly like the secret access key: its own credential store entry with its own random reference (`apiToken` in the config), session memory when the store is unavailable, never returned to the frontend (the summary only has `hasApiToken`), cleared from React state after a successful save, replaced and removed under the same commit and cleanup rules as the secret. It is sent only to `api.cloudflare.com` by `r2dock-r2::cfapi`, never logged, and never part of an error.
+
+Non-secret connection config (name, account ID, jurisdiction, buckets, public base URLs, secret and API token references) is stored as JSON in the platform app config directory, written atomically (temp file then rename).
 
 **No plaintext fallback.** If the credential store is unavailable, the app offers **session-only mode**: the secret is held in memory (zeroized on drop) until quit, and the UI states this clearly. This is a deliberate difference from the Brows3 reference.
 
 **No command ever returns a secret** (a mistake seen in the Furman reference). Secrets in memory use `secrecy::SecretString`. Types holding secrets do not implement `Serialize`, `Debug`, or `Display` without redaction.
 
-The secret does cross IPC once, from the Connect form to `connection_save`/`connection_test`. Mitigations: the field is cleared from React state immediately after the call; the value is never put in TanStack Query or Zustand; the command logs nothing about inputs.
+The secret (and the optional API token) does cross IPC once, from the Connect form to `connection_save`/`connection_test`. Mitigations: the field is cleared from React state immediately after the call; the value is never put in TanStack Query or Zustand; the command logs nothing about inputs.
 
 ### 9.3 Credential lifecycle
 
@@ -550,9 +559,9 @@ stateDiagram-v2
 
 Rotation: "Replace secret" writes the new secret under a new reference, tests it, switches the config, then deletes the old entry. Transfers in progress for that connection pause and resume with the new client.
 
-Config changes are committed as a whole: the change is applied to a copy of the config, the copy is written atomically, and only then does it become the live config and are cached clients for that connection dropped. A failed save leaves memory, disk, cached clients, and stored secrets as they were (a secret written for the failed save is deleted again). The same rule applies to `settings.json`.
+Config changes are committed as a whole: the change is applied to a copy of the config, the copy is written atomically, and only then does it become the live config. Session-only secrets and API tokens are published, and cached clients for that connection dropped, in the same step under the config lock, so no reader can pair new settings with an old secret or old settings with a new secret. A failed save leaves memory, disk, cached clients, and stored secrets as they were (nothing is published, and a credential store entry written for the failed save is deleted again). The same rule applies to `settings.json`.
 
-Unused credential store entries are never forgotten. When a connection is removed or its secret replaced, the old entry's opaque reference is recorded in `connections.json` (`secretCleanup`, references only, never secret values) in the same save that stops using it. The entry is then deleted; if the credential store is unavailable or refuses, the record stays and deletion is retried at the next start and after every connection change. A reference still used by a connection is never deleted. Settings > Security shows how many entries are still waiting. There is no plaintext fallback at any step.
+Unused credential store entries are never forgotten. When a connection is removed or its secret or API token replaced or removed, the old entry's opaque reference is recorded in `connections.json` (`secretCleanup`, references only, never secret values) in the same save that stops using it. If a save fails and the entry written for it cannot be deleted either, its reference is written to `connections-cleanup.json` next to the config (references only) so it survives a quit; it is moved into `secretCleanup` by the next successful save and the side file is removed. The entry is then deleted; if the credential store is unavailable or refuses, the record stays and deletion is retried at the next start and after every connection change. A reference still used by a connection is never deleted. Settings > Security shows how many entries are still waiting. There is no plaintext fallback at any step.
 
 ### 9.4 Tauri hardening
 
@@ -630,6 +639,8 @@ Downloads:
 | Frontend | XSS from object names or previewed content | Names rendered as text; no HTML rendering of objects; CSP; SVG via img only | Low |
 | IPC | Compromised webview calls commands to read local files or delete data | Command allowlist; local paths only via Rust pickers and opaque ids; delete confirmation tokens; input validation | A compromised webview could still delete one object per call within confirmation rules |
 | R2 traffic | Interception | HTTPS with system or rustls roots; no certificate override option | Corporate TLS interception requires trusting a custom root at OS level |
+| Optional API token | Leak, or use beyond reading domains | Same storage as the secret (OS store or session memory, never plaintext, never returned to the frontend); sent only as a Bearer header to the fixed host `api.cloudflare.com` over HTTPS-only reqwest with redirects disabled; only two read-only GET endpoints are called; account ID and bucket name are validated before they enter the URL path; errors are typed and carry no token or response body; the activity log records only the result status | The token's own permissions decide what it could do if stolen. The hint recommends a read-only (Admin Read) token |
+| Cloudflare API responses | Crafted domain names (spoofed link, HTML, header or URL injection) | Response bodies capped at 1 MiB; only plain lowercase host names accepted (letters, digits, hyphens, dots; no ports, paths, IPs, or wildcards); managed domains must end in `.r2.dev`; links always built as `https://<host>/<percent-encoded key>`; rendered as text, opened only through the https-only opener | A domain the account owner configured is trusted as their own |
 | Local files | Path traversal or overwrite from malicious keys | Path guard (9.6), no-clobber rename, temp files | Low |
 | Local files | Following symlinks during upload to exfiltrate | `follow_links(false)`, skip and report | Low |
 | Remote data | Accidental destructive operations | Confirmations, typed confirmation, counts shown, no hidden bulk actions | User error remains possible; R2 has no trash |

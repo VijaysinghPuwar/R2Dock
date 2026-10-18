@@ -19,6 +19,7 @@ const COMMANDS: &[&str] = &[
     "object_list",
     "object_search",
     "object_head",
+    "object_public_url",
     "prefix_size",
     "folder_create",
     "preview_text",

@@ -62,6 +62,10 @@ pub struct ConnectionConfig {
     pub access_key_id: String,
     pub jurisdiction: Jurisdiction,
     pub secret: SecretLocation,
+    /// Optional Cloudflare API token, used only to read a bucket's public
+    /// domains. Stored like the secret; absent in older config files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_token: Option<SecretLocation>,
     /// Buckets entered by the user (needed for bucket-scoped tokens).
     #[serde(default)]
     pub manual_buckets: Vec<String>,
@@ -106,9 +110,10 @@ impl Default for ConnectionsFile {
 impl ConnectionsFile {
     /// Whether a connection still uses this credential store reference.
     pub fn uses_reference(&self, reference: &str) -> bool {
-        self.connections.iter().any(
-            |c| matches!(&c.secret, SecretLocation::Keychain { reference: r } if r == reference),
-        )
+        let is_ref = |l: &SecretLocation| matches!(l, SecretLocation::Keychain { reference: r } if r == reference);
+        self.connections
+            .iter()
+            .any(|c| is_ref(&c.secret) || c.api_token.as_ref().is_some_and(is_ref))
     }
 
     /// Record a reference whose secret must be deleted. A reference that is
@@ -198,6 +203,17 @@ pub fn validate_secret(secret: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Validate an optional Cloudflare API token without returning it.
+pub fn validate_api_token(token: &str) -> Result<(), AppError> {
+    let token = token.trim();
+    if token.is_empty() || token.len() > 256 || !token.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(AppError::invalid_input(
+            "API token contains unexpected characters. Paste the Token value shown when you created the R2 token.",
+        ));
+    }
+    Ok(())
+}
+
 /// R2 bucket names: 3 to 63 characters, lowercase letters, digits, and hyphens,
 /// starting and ending with a letter or digit.
 pub fn validate_bucket_name(name: &str) -> Result<String, AppError> {
@@ -278,6 +294,9 @@ mod tests {
             secret: SecretLocation::Keychain {
                 reference: "live".into(),
             },
+            api_token: Some(SecretLocation::Keychain {
+                reference: "live-token".into(),
+            }),
             manual_buckets: Vec::new(),
             bucket_scoped: false,
             public_base_urls: Default::default(),
@@ -286,6 +305,7 @@ mod tests {
             last_tested_at: None,
         });
         file.add_cleanup("live".into());
+        file.add_cleanup("live-token".into());
         file.add_cleanup("old".into());
         file.add_cleanup("old".into());
         assert_eq!(file.secret_cleanup, vec!["old".to_string()]);
@@ -321,6 +341,10 @@ mod tests {
         assert!(validate_access_key_id("has space").is_err());
         assert!(validate_secret("   ").is_err());
         assert!(validate_secret("abc123").is_ok());
+        assert!(validate_api_token(" abcDEF-123_x ").is_ok());
+        assert!(validate_api_token("   ").is_err());
+        assert!(validate_api_token("has space").is_err());
+        assert!(validate_api_token(&"x".repeat(257)).is_err());
     }
 
     #[test]
@@ -346,6 +370,17 @@ mod tests {
             public_url("https://media.example.com", "Audiobook G/cover.webp"),
             "https://media.example.com/Audiobook%20G/cover.webp"
         );
+    }
+
+    #[test]
+    fn config_without_api_token_still_loads() {
+        let json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"Personal",
+            "accountId":"00000000000000000000000000000000","accessKeyId":"AKIATEST",
+            "jurisdiction":"default","secret":{"kind":"session"},
+            "createdAt":"2026-10-01T00:00:00Z"}"#;
+        let cfg: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.api_token, None);
+        assert!(!serde_json::to_string(&cfg).unwrap().contains("apiToken"));
     }
 
     #[test]

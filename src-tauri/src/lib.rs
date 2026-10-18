@@ -14,6 +14,7 @@ pub mod media;
 #[cfg(target_os = "macos")]
 mod menu;
 pub mod planning;
+pub mod public_links;
 pub mod state;
 
 use std::sync::Arc;
@@ -153,6 +154,11 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         credential_store_label,
         activity,
         compression,
+        // Contacts api.cloudflare.com only when a saved API token exists and
+        // the UI asks for a public link.
+        public_links: public_links::PublicLinks::new(
+            r2dock_r2::cfapi::CfApiClient::cloudflare().ok(),
+        ),
     });
     app.manage(LogHandle(log));
     // Find and check the compression tools in the background.
@@ -226,6 +232,7 @@ pub fn run() {
         commands::browse::object_list,
         commands::browse::object_search,
         commands::browse::object_head,
+        commands::browse::object_public_url,
         commands::browse::prefix_size,
         commands::browse::folder_create,
         commands::browse::preview_text,

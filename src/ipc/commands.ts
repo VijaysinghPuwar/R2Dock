@@ -27,6 +27,7 @@ import type { ObjectInfo } from "./bindings/ObjectInfo";
 import type { OpProgress } from "./bindings/OpProgress";
 import type { Preferences } from "./bindings/Preferences";
 import type { PrefixSize } from "./bindings/PrefixSize";
+import type { PublicLink } from "./bindings/PublicLink";
 import type { Selection } from "./bindings/Selection";
 import type { SettingsView } from "./bindings/SettingsView";
 import type { TestResult } from "./bindings/TestResult";
@@ -78,6 +79,9 @@ export const objectSearch = (connectionId: string, bucket: string, prefix: strin
   invoke<ListPage>("object_search", { connectionId, bucket, prefix, token });
 export const objectHead = (connectionId: string, bucket: string, key: string) =>
   invoke<ObjectInfo>("object_head", { connectionId, bucket, key });
+/** Resolved in Rust; may ask the Cloudflare API for custom domains (cached there). */
+export const objectPublicUrl = (connectionId: string, bucket: string, key: string) =>
+  invoke<PublicLink>("object_public_url", { connectionId, bucket, key });
 export const prefixSize = (connectionId: string, bucket: string, prefix: string) =>
   invoke<PrefixSize>("prefix_size", { connectionId, bucket, prefix });
 export const folderCreate = (connectionId: string, bucket: string, prefix: string, name: string) =>

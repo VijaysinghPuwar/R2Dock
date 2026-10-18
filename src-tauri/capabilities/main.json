@@ -28,6 +28,7 @@
     "allow-object-list",
     "allow-object-search",
     "allow-object-head",
+    "allow-object-public-url",
     "allow-prefix-size",
     "allow-folder-create",
     "allow-preview-text",

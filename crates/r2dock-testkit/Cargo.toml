@@ -11,5 +11,5 @@ publish = false
 s3s = "0.14"
 s3s-fs = "0.14"
 hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "tokio", "http1", "http2"] }
-tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "io-util", "time"] }
 tempfile.workspace = true
