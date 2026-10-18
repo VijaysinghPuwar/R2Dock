@@ -667,7 +667,7 @@ Transfer row (`TransferRow`), 56 px tall:
 - Folder uploads appear as one **group row** ("Uploading folder ch 1-195 . 87 of 195 files") with an expand chevron that reveals child rows (virtualized).
 
 **Interrupted transfers banner** (on app start after an unexpected quit, `warning.subtle`):
-"2 transfers were interrupted when R2Dock closed. Large uploads can continue where they stopped." Actions: **Resume all**, Review, Discard.
+"2 transfers did not finish before R2Dock closed. Started downloads and large uploads continue where they stopped; the rest start again." Actions: **Resume all**, Review, Discard.
 
 **Completed tab**: rows show final size, duration, average speed, and "Show in folder" (downloads) or "Show in bucket" (uploads). History is kept locally for 30 days or 1,000 entries by default.
 
