@@ -51,6 +51,8 @@ describe("compression notices", () => {
     notices.note(makeJob({ id: "b", name: "b.wav", state: "failed", error, compression: { kind: "failed", message: "x" } }));
     vi.advanceTimersByTime(NOTICE_BATCH_MS);
     expect(shown).toEqual(["2 files couldn't be compressed, so they were skipped as set in Settings > Compression."]);
+    // A new run of transfers gets its own toast.
+    notices.endRun();
     notices.note(makeJob({ id: "c", name: "c.wav", state: "failed", error, compression: { kind: "failed", message: "x" } }));
     vi.advanceTimersByTime(NOTICE_BATCH_MS);
     expect(shown[1]).toBe("Couldn't compress c.wav, so it was skipped as set in Settings > Compression.");
@@ -101,6 +103,33 @@ describe("compression notices", () => {
     notices.note({ ...job, state: "completed" });
     vi.advanceTimersByTime(NOTICE_BATCH_MS);
     expect(shown).toHaveLength(1);
+  });
+
+  it("shows one toast for a long queue that decides file by file, and counts the rest", () => {
+    const { shown, notices } = setup();
+    // 100 audiobooks: each decided after its own encode, minutes apart.
+    for (let i = 0; i < 100; i++) {
+      notices.note(makeJob({ id: `b${i}`, name: `book-${i}.mp3`, state: "running", compression: alreadyCompressed }));
+      vi.advanceTimersByTime(141_000);
+    }
+    expect(shown).toEqual(["book-0.mp3 can't be compressed: Already compressed (128 kbps). Uploading the original."]);
+    const quiet = notices.endRun();
+    expect(quiet.size).toBe(99);
+    expect(quiet.has("b0")).toBe(false);
+    // The next run tells again.
+    notices.note(makeJob({ id: "n", name: "next.mp3", compression: alreadyCompressed }));
+    vi.advanceTimersByTime(NOTICE_BATCH_MS);
+    expect(shown).toHaveLength(2);
+  });
+
+  it("shows a toast still collecting when the run ends", () => {
+    const { shown, notices } = setup();
+    notices.note(makeJob({ id: "a", name: "a.wav", compression: alreadyCompressed }));
+    expect(notices.endRun().size).toBe(0);
+    expect(shown).toHaveLength(1);
+    notices.note(makeJob({ id: "b", name: "b.wav", compression: alreadyCompressed }));
+    vi.advanceTimersByTime(NOTICE_BATCH_MS);
+    expect(shown).toHaveLength(2);
   });
 
   it("does not repeat jobs restored from an earlier session", () => {

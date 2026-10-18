@@ -117,6 +117,15 @@ impl WrittenFile {
 /// symbolic link, with what the file looked like. Fails if the file
 /// changed while it was read. Blocking.
 pub fn digest_written(path: &Path) -> std::io::Result<(WrittenFile, String)> {
+    digest_written_until(path, &|| false)?.ok_or_else(|| std::io::ErrorKind::Interrupted.into())
+}
+
+/// [`digest_written`] that gives up early (returns `None`) once `stop`
+/// says so; it is asked between 1 MiB reads. Blocking.
+pub fn digest_written_until(
+    path: &Path,
+    stop: &dyn Fn() -> bool,
+) -> std::io::Result<Option<(WrittenFile, String)>> {
     use sha2::{Digest as _, Sha256};
     let mut file = open_nofollow(path)?;
     let before = file.metadata()?;
@@ -126,6 +135,9 @@ pub fn digest_written(path: &Path) -> std::io::Result<(WrittenFile, String)> {
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1024 * 1024];
     loop {
+        if stop() {
+            return Ok(None);
+        }
         let n = file.read(&mut buf)?;
         if n == 0 {
             break;
@@ -136,7 +148,7 @@ pub fn digest_written(path: &Path) -> std::io::Result<(WrittenFile, String)> {
     if WrittenFile::of(&file.metadata()?) != written {
         return Err(std::io::ErrorKind::Interrupted.into());
     }
-    Ok((written, hex::encode(hasher.finalize())))
+    Ok(Some((written, hex::encode(hasher.finalize()))))
 }
 
 /// A local file checked for upload.
@@ -240,6 +252,23 @@ fn map_open_error(err: &std::io::Error) -> JobError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn digest_stops_between_reads_when_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("copy.mp3");
+        std::fs::write(&p, vec![1u8; 5 * 1024 * 1024]).unwrap();
+        let reads = std::cell::Cell::new(0);
+        let stop = || {
+            reads.set(reads.get() + 1);
+            reads.get() > 2
+        };
+        assert!(digest_written_until(&p, &stop).unwrap().is_none());
+        assert_eq!(reads.get(), 3, "stopped after two 1 MiB reads");
+        let (file, sha) = digest_written_until(&p, &|| false).unwrap().unwrap();
+        assert_eq!(file.len, 5 * 1024 * 1024);
+        assert_eq!((file, sha), digest_written(&p).unwrap());
+    }
 
     #[test]
     fn opens_regular_file_and_hashes() {

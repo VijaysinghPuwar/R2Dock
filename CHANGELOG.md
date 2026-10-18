@@ -12,6 +12,15 @@ All notable changes are listed here. The format follows Keep a Changelog, and th
 
 - A new session-only secret is only used once the connection settings are saved, together with dropping the old client, so a request can never mix old and new keys.
 - A keychain entry left behind by a failed save, whose deletion also failed, is now recorded in a small side file so it is still deleted after a restart.
+- A long queue of files to compress no longer fills the disk with compressed copies: encoding stays only a few files ahead of uploading.
+- Files that need no compression upload while a long encode runs, even behind hundreds of files waiting for the encoder.
+- Cancel takes effect at once on a slow network (the upload is aborted in the background), and Pause stops a large upload within about 3 seconds instead of waiting for every part in flight.
+- Rows show "Cancelling..." or "Pausing..." right after the click, with the conflicting buttons disabled until the transfer stops.
+- One "can't be compressed" toast per batch of transfers; the batch summary counts the rest.
+- A compressed copy is checked again before every retry, and a pause or cancel during that check is honored.
+- A transfer that finishes while it is being saved can no longer reappear after a restart, and a file found not worth compressing is not encoded again after a restart.
+- The transfer queue is saved as a small change log instead of rewriting the whole queue every second, which cuts disk writes for very large queues.
+- FFmpeg runs below normal priority on macOS and Linux, as it already did on Windows.
 
 ## [0.4.1] - 2026-10-18
 

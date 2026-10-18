@@ -9,6 +9,10 @@
 //!   killed when R2Dock exits; on macOS and Linux it runs in its own process
 //!   group and exits on the next progress write after R2Dock is gone (the
 //!   pipe is closed). In every case the child is killed when dropped.
+//! - FFmpeg runs below normal priority so the computer stays responsive:
+//!   on Windows with BELOW_NORMAL_PRIORITY_CLASS, on macOS and Linux
+//!   through the system `nice` (which replaces itself with FFmpeg, so the
+//!   process, its group, and its kill handling are FFmpeg's own).
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
@@ -89,7 +93,24 @@ fn forward<R: AsyncRead + Unpin + Send + 'static>(
     });
 }
 
+/// The system `nice`, at the fixed paths it has on macOS and Linux.
+#[cfg(unix)]
+const NICE: [&str; 2] = ["/usr/bin/nice", "/bin/nice"];
+
 fn command(bin: &Path, args: &[OsString]) -> CommandWrap {
+    #[cfg(unix)]
+    // A missing FFmpeg is started directly, so it fails as a spawn error
+    // and not as an exit code from `nice`.
+    let nice = NICE.iter().map(Path::new).find(|p| p.is_file());
+    let mut cmd = match nice.filter(|_| bin.is_file()) {
+        Some(nice) => {
+            let mut c = tokio::process::Command::new(nice);
+            c.args(["-n", "10"]).arg(bin);
+            c
+        }
+        None => tokio::process::Command::new(bin),
+    };
+    #[cfg(not(unix))]
     let mut cmd = tokio::process::Command::new(bin);
     cmd.args(args)
         .stdin(Stdio::null())
@@ -208,5 +229,27 @@ mod tests {
         let line = "file:/Users/someone/Music/Book One/part 1.mp3: Invalid data found";
         assert_eq!(sanitize(line, &[p]), "file:part 1.mp3: Invalid data found");
         assert_eq!(sanitize("no paths here", &[p]), "no paths here");
+    }
+
+    /// FFmpeg runs below normal priority, as itself (same process id).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runs_below_normal_priority() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("ffmpeg");
+        std::fs::write(&bin, "#!/bin/sh\nps -o nice= -p $$ >&2\n").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let lines = run(
+            &bin,
+            &[],
+            &CancellationToken::new(),
+            RunOptions::default(),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        let nice: i32 = lines.last().unwrap().trim().parse().unwrap();
+        assert_eq!(nice, 10, "{lines:?}");
     }
 }

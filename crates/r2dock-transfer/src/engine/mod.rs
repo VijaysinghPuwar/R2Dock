@@ -6,6 +6,8 @@
 //! Compression before upload runs beside the scheduler (see [`compress`]).
 
 mod compress;
+#[cfg(test)]
+mod tests;
 
 pub use compress::{CompressionEvent, CompressionObserver, MediaRuntime};
 
@@ -136,7 +138,12 @@ struct Inner {
     config: EngineConfig,
     media: RwLock<Option<MediaRuntime>>,
     compression_observer: RwLock<Option<CompressionObserver>>,
+    #[cfg(test)]
+    queue_save_hook: Mutex<Option<QueueSaveHook>>,
 }
+
+#[cfg(test)]
+type QueueSaveHook = Arc<dyn Fn(&[JobId]) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct Engine {
@@ -154,7 +161,8 @@ impl Engine {
         let transfers = config.data_dir.join("transfers");
         let (journal, recovered) = Journal::load(transfers.join("journal.json"));
         journal.spawn_writer(JOURNAL_BATCH);
-        let (queue, accepted) = Journal::load(transfers.join("queue.json"));
+        let (queue, accepted) =
+            Journal::load_logged(transfers.join("queue.json"), transfers.join("queue.log"));
         queue.spawn_writer(QUEUE_BATCH);
         let history = Arc::new(History::new(transfers.join("history.jsonl")));
         let inner = Arc::new(Inner {
@@ -175,6 +183,8 @@ impl Engine {
             config,
             media: RwLock::new(None),
             compression_observer: RwLock::new(None),
+            #[cfg(test)]
+            queue_save_hook: Mutex::new(None),
         });
         let engine = Self { inner };
         engine.restore(recovered, accepted);
@@ -329,9 +339,14 @@ impl Engine {
                 jobs.map.insert(id, entry);
                 ids.push(id);
             }
+            // Saved before anything runs, so accepted work survives a
+            // restart. Saved under the jobs lock: a job that finishes at
+            // once removes its record only after this, so a finished job
+            // never comes back as interrupted.
+            #[cfg(test)]
+            self.inner.before_queue_save(&ids);
+            self.inner.queue.upsert_many(intents);
         }
-        // Saved before anything runs, so accepted work survives a restart.
-        self.inner.queue.upsert_many(intents);
         // Large batches are sent in chunks to keep IPC messages small.
         for chunk in added.chunks(500) {
             self.inner.emit(TransferEvent::Added {
@@ -423,6 +438,12 @@ impl Engine {
         self.inner.queue.flush();
     }
 
+    /// Bytes written for the queue file so far (for measurements).
+    #[doc(hidden)]
+    pub fn queue_bytes_written(&self) -> u64 {
+        self.inner.queue.bytes_written()
+    }
+
     /// Final file of a completed download.
     pub fn download_path(&self, id: JobId) -> Option<PathBuf> {
         let jobs = self.inner.jobs.lock();
@@ -454,6 +475,27 @@ impl Inner {
         let sink = self.sink.read().clone();
         if let Some(sink) = sink {
             sink(event);
+        }
+    }
+
+    /// Save a job's current spec to the queue file, unless it finished.
+    /// Under the jobs lock, so it cannot land after the finish removed it.
+    fn save_intent(&self, id: JobId) {
+        let jobs = self.jobs.lock();
+        if let Some(e) = jobs.map.get(&id)
+            && !is_finished(e.snap.state)
+        {
+            self.queue.upsert(e.intent());
+        }
+    }
+
+    /// Test hook: runs right before accepted jobs are saved to the queue
+    /// file, to check that a job finishing then cannot leave a stale record.
+    #[cfg(test)]
+    fn before_queue_save(&self, ids: &[JobId]) {
+        let hook = self.queue_save_hook.lock().clone();
+        if let Some(f) = hook {
+            f(ids);
         }
     }
 
@@ -582,10 +624,12 @@ impl Inner {
                 }
             }
             while active < limit {
-                // Look at the front of the queue; prefer the group with the fewest running jobs.
+                // Look at the first jobs that can upload now; prefer the
+                // group with the fewest running jobs. Jobs waiting for the
+                // encoder are passed over without counting, so a long line
+                // of them never keeps idle upload slots from other files.
                 let pick = queue
                     .iter()
-                    .take(256)
                     .enumerate()
                     .filter(|(_, id)| {
                         map.get(id).is_some_and(|e| {
@@ -600,6 +644,7 @@ impl Inner {
                                     )))
                         })
                     })
+                    .take(256)
                     .min_by_key(|(i, id)| {
                         let g = map
                             .get(id)
@@ -641,8 +686,8 @@ impl Inner {
         enum Then {
             Nothing,
             Emit(Box<JobSnapshot>),
-            /// Emit, and save the job again (it is back in the queue or changed).
-            Saved(Box<JobSnapshot>, Box<JournalEntry>),
+            /// Emit; the job was saved again (it is back in the queue or changed).
+            Saved(Box<JobSnapshot>),
             Cancelled,
             Removed(ResumeState, Uuid, String),
         }
@@ -713,7 +758,11 @@ impl Inner {
                         e.snap.compression = CompressionView::of(u);
                     }
                     let snap = requeue(e, queue);
-                    Then::Saved(snap, Box::new(e.intent()))
+                    #[cfg(test)]
+                    self.before_queue_save(&[id]);
+                    // Under the lock, like `enqueue`.
+                    self.queue.upsert(e.intent());
+                    Then::Saved(snap)
                 }
                 JobAction::Resolve(policy) => {
                     if state != JobState::NeedsDecision {
@@ -721,7 +770,8 @@ impl Inner {
                     }
                     e.spec.set_policy(policy);
                     let snap = requeue(e, queue);
-                    Then::Saved(snap, Box::new(e.intent()))
+                    self.queue.upsert(e.intent());
+                    Then::Saved(snap)
                 }
                 JobAction::Cancel => {
                     if state.is_terminal() {
@@ -766,8 +816,7 @@ impl Inner {
                 self.emit(TransferEvent::Updated { job });
                 self.wake.notify_one();
             }
-            Then::Saved(job, intent) => {
-                self.queue.upsert(*intent);
+            Then::Saved(job) => {
                 self.emit(TransferEvent::Updated { job });
                 self.wake.notify_one();
             }
@@ -873,6 +922,10 @@ impl Inner {
 struct Hooks(Arc<Inner>);
 
 impl JobHooks for Hooks {
+    fn persist_now(&self) {
+        self.0.journal.flush();
+    }
+
     fn state(&self, id: JobId, state: JobState) {
         self.0.set_state(id, state, None);
     }
@@ -907,10 +960,10 @@ impl JobHooks for Hooks {
                 ),
             };
             e.snap.local_display = self.0.local_display(&e.spec);
-            (e.snap.clone(), e.intent())
+            // Under the lock, like `enqueue`.
+            self.0.queue.upsert(e.intent());
+            e.snap.clone()
         };
-        let (snap, intent) = snap;
-        self.0.queue.upsert(intent);
         self.0.emit(TransferEvent::Updated {
             job: Box::new(snap),
         });
@@ -1020,10 +1073,21 @@ async fn progress_ticker(inner: Arc<Inner>) {
     }
 }
 
-async fn run_job(inner: Arc<Inner>, id: JobId, control: Arc<RunControl>) {
-    // A compressed copy is used only while its original is unchanged and
-    // the copy is still the exact file that passed verification; otherwise
-    // it is compressed again (or the original is uploaded, per policy).
+/// What happened when a job's compressed copy was checked before an attempt.
+enum CopyGate {
+    /// No copy, or the copy is fine: go ahead.
+    Go,
+    /// The copy cannot be used; the job went back to the queue.
+    Requeued,
+    /// A pause or cancel arrived while the copy was read.
+    Stopped,
+}
+
+/// Before every upload attempt (the first and each retry), a compressed
+/// copy is used only while its original is unchanged and the copy is still
+/// the exact file that passed verification; otherwise it is compressed
+/// again (or the original is uploaded, per policy). Never fails the job.
+async fn gate_copy(inner: &Arc<Inner>, id: JobId, control: &Arc<RunControl>) -> CopyGate {
     let copy = {
         let jobs = inner.jobs.lock();
         jobs.map.get(&id).and_then(|e| match &e.spec {
@@ -1031,24 +1095,65 @@ async fn run_job(inner: Arc<Inner>, id: JobId, control: Arc<RunControl>) {
             JobSpec::Download(_) => None,
         })
     };
-    if let Some(copy) = copy {
-        let changed = tokio::task::spawn_blocking(move || compress::copy_unusable(&copy))
-            .await
-            .unwrap_or(true);
-        if changed {
+    let Some(copy) = copy else {
+        return CopyGate::Go;
+    };
+    if control.stop() != Stop::None {
+        return CopyGate::Stopped;
+    }
+    let stop = control.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        compress::check_copy(&copy, &|| stop.stop() != Stop::None)
+    })
+    .await
+    .unwrap_or(compress::CopyCheck::Unusable);
+    if control.stop() != Stop::None {
+        return CopyGate::Stopped;
+    }
+    match checked {
+        compress::CopyCheck::Usable(identity) => {
+            // The copy may report a new identity after a restart; its
+            // content was just proven, so the upload checks that one.
+            if let Some(e) = inner.jobs.lock().map.get_mut(&id)
+                && let JobSpec::Upload(u) = &mut e.spec
+            {
+                u.identity = identity;
+            }
+            CopyGate::Go
+        }
+        compress::CopyCheck::Stopped => CopyGate::Stopped,
+        compress::CopyCheck::Unusable => {
             inner.drop_compressed(id, true);
             Hooks(inner.clone()).checkpoint(id);
+            inner.save_intent(id);
             if let Some(e) = inner.jobs.lock().map.get_mut(&id)
-                && e.control.as_ref().is_some_and(|c| Arc::ptr_eq(c, &control))
+                && e.control.as_ref().is_some_and(|c| Arc::ptr_eq(c, control))
             {
                 e.control = None;
             }
             inner.set_state(id, JobState::Queued, None);
             inner.wake.notify_one();
-            return;
+            CopyGate::Requeued
         }
     }
+}
+
+async fn run_job(inner: Arc<Inner>, id: JobId, control: Arc<RunControl>) {
     loop {
+        match gate_copy(&inner, id, &control).await {
+            CopyGate::Go => {}
+            CopyGate::Requeued => return,
+            CopyGate::Stopped => {
+                match control.stop() {
+                    Stop::Pause => inner.set_state(id, JobState::Paused, None),
+                    _ => {
+                        inner.discard_partial(id);
+                        inner.finish(id, JobState::Cancelled, None);
+                    }
+                }
+                break;
+            }
+        }
         let (spec, resume, counter, connection) = {
             let jobs = inner.jobs.lock();
             let Some(e) = jobs.map.get(&id) else { return };

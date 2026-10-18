@@ -374,6 +374,15 @@ pub async fn run(ctx: &JobCtx, spec: &mut DownloadSpec) -> Result<Outcome, JobEr
         final_path: final_path.clone(),
         finalized: Some(written),
     }));
+    // On disk before the move, not in the next batched save: after a crash
+    // right after the move, this record is what tells the moved file apart
+    // from someone else's file at the destination.
+    let hooks = ctx.hooks.clone();
+    blocking(move || {
+        hooks.persist_now();
+        Ok(())
+    })
+    .await?;
     let policy = spec.policy;
     let temp_c = temp.clone();
     let final_c = final_path.clone();

@@ -21,6 +21,7 @@ import { parentPrefix, visibleText } from "../../lib/keys";
 import { control, controlMany, run } from "./actions";
 import { compressionLine } from "./compressionText";
 import { groupText } from "./groups";
+import { usePendingStore, type PendingStop } from "./pendingStore";
 import { isTerminal } from "./stats";
 import "./transfers.css";
 
@@ -58,13 +59,18 @@ function destination(job: JobSnapshot): string {
 }
 
 /** Status line text and its screen-reader version. */
-function statusParts(job: JobSnapshot): { text: string; aria: string } {
+function statusParts(job: JobSnapshot, stopping?: PendingStop): { text: string; aria: string } {
   const parts: Array<string | null> = [];
   const ariaParts: Array<string | null> = [];
   const push = (t: string | null, a?: string) => {
     parts.push(t);
     ariaParts.push(a ?? t);
   };
+  // A stop was asked for; the engine has not answered yet.
+  if (stopping && !isTerminal(job.state)) {
+    push(stopping === "cancel" ? "Cancelling..." : "Pausing...");
+    return { text: joinDot(parts), aria: joinDot(ariaParts) };
+  }
   switch (job.state) {
     case "queued":
       push("Queued");
@@ -128,6 +134,7 @@ function statusParts(job: JobSnapshot): { text: string; aria: string } {
 
 export function JobActions({ job, compact = false }: { job: JobSnapshot; compact?: boolean }) {
   const client = useQueryClient();
+  const stopping = usePendingStore((s) => s.pending[job.id]);
   const size = "sm" as const;
   const buttons: ReactNode[] = [];
   if (job.state === "needsDecision") {
@@ -144,7 +151,9 @@ export function JobActions({ job, compact = false }: { job: JobSnapshot; compact
     );
   }
   if (job.pausable && PAUSABLE_STATES.has(job.state)) {
-    buttons.push(<IconButton key="pause" size={size} label="Pause" icon={<Pause size={14} />} onClick={() => control(job.id, { action: "pause" })} />);
+    buttons.push(
+      <IconButton key="pause" size={size} label="Pause" icon={<Pause size={14} />} disabled={stopping !== undefined} onClick={() => control(job.id, { action: "pause" })} />,
+    );
   }
   if (job.state === "paused" || job.state === "interrupted") {
     buttons.push(<IconButton key="resume" size={size} label="Resume" icon={<Play size={14} />} onClick={() => control(job.id, { action: "resume" })} />);
@@ -175,7 +184,9 @@ export function JobActions({ job, compact = false }: { job: JobSnapshot; compact
     );
   }
   if (!isTerminal(job.state)) {
-    buttons.push(<IconButton key="cancel" size={size} label="Cancel" icon={<X size={14} />} onClick={() => control(job.id, { action: "cancel" })} />);
+    buttons.push(
+      <IconButton key="cancel" size={size} label="Cancel" icon={<X size={14} />} disabled={stopping === "cancel"} onClick={() => control(job.id, { action: "cancel" })} />,
+    );
   } else {
     buttons.push(<IconButton key="dismiss" size={size} label="Dismiss" icon={<X size={14} />} onClick={() => control(job.id, { action: "dismiss" })} />);
   }
@@ -190,7 +201,8 @@ export interface TransferRowProps {
 
 export function TransferRow({ job, compact = false, child = false }: TransferRowProps) {
   const [showDetails, setShowDetails] = useState(false);
-  const status = statusParts(job);
+  const stopping = usePendingStore((s) => s.pending[job.id]);
+  const status = statusParts(job, stopping);
   const pct = formatPercent(job.transferredBytes, job.totalBytes);
   const indeterminate = job.state === "preparing" || job.state === "verifying";
   const Icon = job.direction === "upload" ? ArrowUp : ArrowDown;
@@ -274,12 +286,14 @@ export function GroupRow({
   const done = all.reduce((n, j) => n + (j.state === "completed" ? j.totalBytes : j.transferredBytes), 0);
   const total = all.reduce((n, j) => n + j.totalBytes, 0);
   const pct = formatPercent(done, total);
+  const stopping = usePendingStore((s) => s.pending);
   const failed = all.filter((j) => j.state === "failed");
-  const pausable = jobs.filter((j) => j.pausable && PAUSABLE_STATES.has(j.state));
+  const pausable = jobs.filter((j) => j.pausable && PAUSABLE_STATES.has(j.state) && stopping[j.id] === undefined);
   const resumable = jobs.filter((j) => j.state === "paused" || j.state === "interrupted");
-  const cancellable = all.filter((j) => !isTerminal(j.state));
+  const unfinished = all.filter((j) => !isTerminal(j.state));
+  const cancellable = unfinished.filter((j) => stopping[j.id] !== "cancel");
   const Icon = (all[0]?.direction ?? "upload") === "upload" ? ArrowUp : ArrowDown;
-  const tone: ProgressTone = failed.length > 0 ? "danger" : cancellable.length === 0 ? "success" : "accent";
+  const tone: ProgressTone = failed.length > 0 ? "danger" : unfinished.length === 0 ? "success" : "accent";
 
   return (
     <div className="xfer-row is-group" role="listitem">

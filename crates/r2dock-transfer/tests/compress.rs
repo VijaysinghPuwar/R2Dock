@@ -133,11 +133,7 @@ async fn harness_with(
     let engine = Engine::start(provider, config);
     let work = data.path().join("compress");
     if let Some(bin) = bin {
-        engine.set_media(Some(MediaRuntime {
-            ffmpeg: Ffmpeg::new(bin),
-            work_dir: work.clone(),
-            encode_limit: 1,
-        }));
+        engine.set_media(Some(MediaRuntime::new(Ffmpeg::new(bin), work.clone(), 1)));
     }
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
@@ -727,11 +723,11 @@ async fn video_upload_becomes_av1_mp4() {
         return;
     }
     let h = harness_with(None, None, None).await;
-    h.engine.set_media(Some(MediaRuntime {
-        ffmpeg: Ffmpeg::new(bin.clone()).with_video(probe, encoders),
-        work_dir: h.work.clone(),
-        encode_limit: 1,
-    }));
+    h.engine.set_media(Some(MediaRuntime::new(
+        Ffmpeg::new(bin.clone()).with_video(probe, encoders),
+        h.work.clone(),
+        1,
+    )));
     let input = h.files.path().join("Holiday.mkv");
     make(
         &bin,
@@ -783,4 +779,148 @@ async fn video_upload_becomes_av1_mp4() {
         Some("av1-crf35")
     );
     assert!(work_files(&h.work).is_empty());
+}
+
+/// A file the encoder decided not to compress keeps that answer across a
+/// restart: it is not run through FFmpeg again.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unchanged_result_survives_a_restart() {
+    let Some(bin) = ffmpeg_bin() else { return };
+    let h = harness_with(Some(bin.clone()), None, None).await;
+    h.client
+        .sdk()
+        .put_object()
+        .bucket(BUCKET)
+        .key("short.mp3")
+        .body(b"old".to_vec().into())
+        .send()
+        .await
+        .unwrap();
+    // Too small to be worth compressing.
+    let input = h.files.path().join("short.mp3");
+    speech_mp3(&bin, &input, 20);
+    let ids = h.engine.enqueue(
+        vec![upload(
+            input,
+            "short.mp3",
+            ConflictPolicy::Ask,
+            CompressionFailure::UploadOriginal,
+        )],
+        None,
+    );
+    let j = wait_state(&h.engine, ids[0], &[JobState::NeedsDecision]).await;
+    assert!(matches!(
+        j.compression,
+        Some(CompressionView::Unchanged { .. })
+    ));
+    assert_eq!(started(&h.events), 1);
+    h.engine.flush();
+    let Harness {
+        _s3: s3,
+        engine,
+        data,
+        files,
+        ..
+    } = h;
+    drop(engine);
+    let h2 = harness_with(Some(bin.clone()), Some(data), Some(s3)).await;
+    let j = wait_state(&h2.engine, ids[0], &[JobState::Interrupted]).await;
+    assert!(
+        matches!(j.compression, Some(CompressionView::Unchanged { .. })),
+        "{:?}",
+        j.compression
+    );
+    h2.engine.control(ids[0], JobAction::Resume).unwrap();
+    wait_state(&h2.engine, ids[0], &[JobState::NeedsDecision]).await;
+    h2.engine
+        .control(ids[0], JobAction::Resolve(ConflictPolicy::Replace))
+        .unwrap();
+    let j = wait_state(&h2.engine, ids[0], &[JobState::Completed, JobState::Failed]).await;
+    assert_eq!(j.state, JobState::Completed, "{:?}", j.error);
+    assert_eq!(started(&h2.events), 0, "not compressed again");
+    drop(files);
+}
+
+/// Fails every request (nothing listens there) until switched to the server.
+struct Flaky {
+    endpoint: String,
+    up: std::sync::atomic::AtomicBool,
+}
+
+impl ClientProvider for Flaky {
+    fn client(&self, _connection: Uuid) -> BoxFuture<'_, Result<R2Client, AppError>> {
+        let endpoint = if self.up.load(std::sync::atomic::Ordering::SeqCst) {
+            self.endpoint.clone()
+        } else {
+            "http://127.0.0.1:9".into()
+        };
+        let params = ClientParams {
+            account_id: "test".into(),
+            access_key_id: ACCESS_KEY.into(),
+            secret: SECRET_KEY.to_string().into(),
+            jurisdiction: Jurisdiction::Default,
+            endpoint_override: Some(endpoint),
+        };
+        Box::pin(async move { Ok(R2Client::new(&params)) })
+    }
+}
+
+/// A copy altered in place while its upload waits to retry is checked again
+/// before the retry and compressed again; the altered bytes never upload.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_copy_changed_during_a_retry_wait_is_not_uploaded() {
+    let Some(bin) = ffmpeg_bin() else { return };
+    let s3 = LocalS3::start(&[BUCKET]).await;
+    let provider = Arc::new(Flaky {
+        endpoint: s3.endpoint.clone(),
+        up: std::sync::atomic::AtomicBool::new(false),
+    });
+    let data = tempfile::tempdir().unwrap();
+    let engine = Engine::start(
+        provider.clone(),
+        EngineConfig::new(data.path().to_path_buf()),
+    );
+    let work = data.path().join("compress");
+    engine.set_media(Some(MediaRuntime::new(
+        Ffmpeg::new(bin.clone()),
+        work.clone(),
+        1,
+    )));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = events.clone();
+    engine.observe_compression(Arc::new(move |e| sink.lock().push(e)));
+
+    let files = tempfile::tempdir().unwrap();
+    let input = files.path().join("talk.mp3");
+    speech_mp3(&bin, &input, 150);
+    let ids = engine.enqueue(
+        vec![upload(
+            input,
+            "talk.mp3",
+            ConflictPolicy::Replace,
+            CompressionFailure::SkipFile,
+        )],
+        None,
+    );
+    let j = wait_state(&engine, ids[0], &[JobState::Retrying, JobState::Failed]).await;
+    assert_eq!(j.state, JobState::Retrying, "{:?}", j.error);
+    // Alter the copy in place (same size) during the wait, then let the
+    // network come back.
+    let names = work_files(&work);
+    assert_eq!(names.len(), 1);
+    let copy = work.join(&names[0]);
+    let valid = std::fs::read(&copy).unwrap();
+    let mut broken = valid.clone();
+    let mid = broken.len() / 2;
+    broken[mid] ^= 0xFF;
+    std::fs::write(&copy, &broken).unwrap();
+    provider.up.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let j = wait_state(&engine, ids[0], &[JobState::Completed, JobState::Failed]).await;
+    assert_eq!(j.state, JobState::Completed, "{:?}", j.error);
+    let client = provider.client(Uuid::nil()).await.unwrap();
+    let uploaded = object(&client, "talk.mp3").await;
+    assert!(uploaded != broken, "the altered copy was uploaded");
+    assert!(uploaded == valid, "the upload is a fresh valid copy");
+    assert_eq!(started(&events), 2, "compressed again");
 }

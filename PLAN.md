@@ -713,7 +713,7 @@ sequenceDiagram
 |---|---|---|---|
 | Retry after failure | Start a failed job again. Single PUT restarts from zero; multipart re-sends only missing parts; download continues from saved bytes if ETag unchanged | All | Yes |
 | Multipart recovery | Within a running session, failed parts are retried without restarting the whole file | Multipart uploads | Yes |
-| Pause and resume | User stops a job and continues later in the same session. Multipart: finish in-flight parts, stop scheduling. Download: stop, keep partial file | Multipart uploads, downloads. **Not** single PUT uploads | Yes |
+| Pause and resume | User stops a job and continues later in the same session. Multipart: stop scheduling, let in-flight parts finish for up to 3 s, then stop them (an unfinished part is sent again on resume). Download: stop, keep partial file. Compression: the encode stops and starts again on resume | Multipart uploads, downloads. **Not** single PUT uploads | Yes |
 | Resume after restart | After quit or crash, continue using the journal. Multipart: use stored UploadId and `ListParts` to find completed parts. Download: Range from partial file with `If-Match` | Multipart uploads within 7 days, downloads | Should have |
 
 ### 12.2 Job state machine
@@ -752,6 +752,9 @@ stateDiagram-v2
 - Folder uploads: Rust walks the folder lazily, creates one **group job** with child jobs added in batches, so 10,000 files do not create 10,000 UI objects at once.
 - Fairness: round-robin between group jobs so one huge folder does not starve a single file the user just dropped.
 - Writes to the same key are serialized.
+- Jobs waiting for the encoder are passed over by the upload scheduler without counting toward its look-ahead window, so a long line of files waiting to compress never keeps idle upload slots from other files.
+- Compression runs ahead of uploads only a little: a new encode starts only while the finished copies waiting for (or in) upload, plus running encodes, are fewer than the upload slots plus the encoders (3 + 1 by default), and while those copies total less than 4 GiB (one copy is always allowed). Paused, failed, or undecided jobs do not hold this back. Each encode also checks free space first (1.2 times the estimated output), and a file that does not fit is uploaded as the original. Measured in `docs/benchmarks/2026-10-18-compression-at-scale.md`.
+- The queue file (`queue.json`) is a compact snapshot plus an append-only change log (`queue.log`), folded into a new snapshot when the log is as large as the snapshot (and at least 1 MiB) and at every start. Draining a 100,000-job queue writes a few dozen bytes per finished job instead of the whole queue every second. Jobs that finished less than about a second before a crash can come back as Interrupted; resuming them is safe (conflict policy and verification apply).
 
 ### 12.4 Progress reporting
 
@@ -764,6 +767,9 @@ stateDiagram-v2
 
 - Each job owns a `CancellationToken` (tokio-util). Cancel stops scheduling, drops in-flight requests, and runs cleanup. Cancellation is checked **inside** streaming loops (via `tokio::select!` on the token), not only between files or parts, so large parts and downloads stop promptly.
 - Multipart cleanup uses an RAII guard that calls `AbortMultipartUpload` on drop unless the job completed or was paused for later resume (Brows3 pattern, extended for pause).
+- A cancelled multipart upload reads Cancelled at once: `AbortMultipartUpload` runs in the background with a 60 s limit, since on a slow or flaky network it can take seconds with the SDK's retries. An abort that never succeeds is cleaned up by R2's default 7-day rule.
+- A compressed copy is checked (original unchanged, SHA-256 of the copy) right before every upload attempt, including retries, on a blocking thread that stops between 1 MiB reads when the job is paused or cancelled. Nothing is read at startup, so a restart with many copies is instant and each copy costs one read just before its own upload.
+- The UI shows "Cancelling..." or "Pausing..." on a row from the click until the job's new state arrives, with the conflicting buttons disabled.
 - Downloads delete the partial temp file on cancel; keep it on pause or interruption.
 
 ### 12.6 Module layout

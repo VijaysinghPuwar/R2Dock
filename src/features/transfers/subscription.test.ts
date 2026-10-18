@@ -179,6 +179,38 @@ describe("transfer subscription", () => {
     expect(messages()).toHaveLength(1);
   });
 
+  it("100 uploads that go up uncompressed over hours give one notice and one summary", async () => {
+    const { useToastStore } = await setup();
+    const unchanged = { kind: "unchanged" as const, reason: { kind: "plan" as const, reason: { reason: "alreadyCompressed" as const, kbps: 48 } } };
+    const jobs = Array.from({ length: 100 }, (_, i) =>
+      makeJob({ id: `b${i}`, name: `book-${i}.mp3`, bucket: "media-library", key: `books/book-${i}.mp3`, state: "queued", compression: { kind: "pending", fraction: null } }),
+    );
+    send({ type: "added", jobs });
+    for (const job of jobs) {
+      send({ type: "updated", job: { ...job, state: "running", compression: unchanged } });
+      vi.advanceTimersByTime(141_000);
+      send({ type: "updated", job: { ...job, state: "completed", compression: unchanged } });
+    }
+    vi.advanceTimersByTime(1000);
+    const messages = useToastStore.getState().toasts.map((t) => t.message);
+    expect(messages.filter((m) => m.includes("compressed"))).toEqual([
+      "book-0.mp3 can't be compressed: Already compressed (48 kbps). Uploading the original.",
+      "Uploaded 100 files to books. 99 more files went up uncompressed.",
+    ]);
+  });
+
+  it("clears a pending cancel when the job's new state arrives", async () => {
+    await setup();
+    const { usePendingStore } = await import("./pendingStore");
+    const job = makeJob({ id: "j1", state: "running" });
+    send({ type: "added", jobs: [job] });
+    usePendingStore.getState().mark(["j1"], "cancel");
+    send({ type: "updated", job: { ...job, state: "verifying" } });
+    expect(usePendingStore.getState().pending.j1).toBe("cancel");
+    send({ type: "updated", job: { ...job, state: "cancelled" } });
+    expect(usePendingStore.getState().pending.j1).toBeUndefined();
+  });
+
   it("Show on the upload toast switches to the transfer's account", async () => {
     const { client, qk, useToastStore, useNavStore } = await setup();
     client.setQueryData(qk.connections, [conn("conn-a", false), conn("conn-b", true)]);

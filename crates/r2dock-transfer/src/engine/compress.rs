@@ -23,7 +23,7 @@ use crate::model::{
     CompressedCopy, CompressionFailure, CompressionResult, CompressionView, CopyDigest, JobId,
     JobSpec, JobState, TransferEvent, UploadSpec,
 };
-use crate::source::{SourceFile, digest_written};
+use crate::source::{FileIdentity, SourceFile, WrittenFile, digest_written, digest_written_until};
 
 /// How often compression progress is sent.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
@@ -39,6 +39,24 @@ pub struct MediaRuntime {
     pub work_dir: PathBuf,
     /// Encodes at the same time (1 to 4).
     pub encode_limit: usize,
+    /// Most bytes of compressed copies waiting for (or in) upload before
+    /// another encode starts. One copy is always allowed, so a single copy
+    /// larger than this still goes through.
+    pub ready_bytes: u64,
+}
+
+/// Default for [`MediaRuntime::ready_bytes`].
+pub const DEFAULT_READY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+impl MediaRuntime {
+    pub fn new(ffmpeg: Ffmpeg, work_dir: PathBuf, encode_limit: usize) -> Self {
+        Self {
+            ffmpeg,
+            work_dir,
+            encode_limit,
+            ready_bytes: DEFAULT_READY_BYTES,
+        }
+    }
 }
 
 /// Compression milestones, for the activity log.
@@ -91,6 +109,19 @@ impl Inner {
                 .values()
                 .filter(|e| e.snap.state == JobState::Compressing)
                 .count();
+            // Finished copies waiting for (or in) upload. Encodes stop
+            // while these fill the upload slots plus one per encoder, so a
+            // big queue never piles up copies on disk faster than they
+            // upload. Paused or stopped jobs do not hold back the rest.
+            let (ready, ready_bytes) = map
+                .values()
+                .filter(|e| e.snap.state == JobState::Queued || e.snap.state.is_active())
+                .filter_map(|e| match &e.spec {
+                    JobSpec::Upload(u) if u.compressed_copy().is_some() => Some(u.size),
+                    _ => None,
+                })
+                .fold((0usize, 0u64), |(n, b), size| (n + 1, b + size));
+            let uploads = self.concurrency.load(std::sync::atomic::Ordering::Relaxed);
             let waiting: Vec<JobId> = queue
                 .iter()
                 .copied()
@@ -114,7 +145,11 @@ impl Inner {
                     unchanged.push((id, u.key.clone(), e.snap.clone()));
                     continue;
                 };
-                if running >= media.encode_limit.max(1) {
+                let encoders = media.encode_limit.max(1);
+                if running >= encoders
+                    || ready + running >= uploads + encoders
+                    || (ready > 0 && ready_bytes >= media.ready_bytes)
+                {
                     break;
                 }
                 running += 1;
@@ -239,30 +274,54 @@ pub(super) fn restore_original(u: &mut UploadSpec) {
         u.local = c.original_local;
         u.key = c.original_key;
         u.size = c.original_size;
-        // The identity was the copy's; the original's was not kept.
-        u.identity = None;
+        // The identity was the copy's; the original is checked against its own.
+        u.identity = c.original_identity;
     }
     u.compressed = None;
 }
 
-/// Whether a compressed copy can no longer be uploaded: its original
-/// changed since it was compressed, or the copy is not the exact file that
-/// passed verification (missing, replaced, truncated, or altered, even
-/// without a size change). A copy saved without a digest is not trusted.
-/// Blocking: reads the whole copy.
-pub(super) fn copy_unusable(c: &CompressedCopy) -> bool {
+/// Whether a compressed copy can still be uploaded.
+pub(super) enum CopyCheck {
+    /// Yes; the copy's identity as it is now.
+    Usable(Option<FileIdentity>),
+    /// No: compress again (or upload the original, per policy).
+    Unusable,
+    /// The job was paused or cancelled while the copy was read.
+    Stopped,
+}
+
+/// Check a compressed copy before an upload attempt: its original must be
+/// unchanged since it was compressed, and the copy must be the exact file
+/// that passed verification (missing, replaced, truncated, or altered, even
+/// without a size change, all fail). A copy saved without a digest is not
+/// trusted. Size and modification time are a quick first check; the
+/// SHA-256 decides. The device and inode are not compared: some file
+/// systems report new ones after a restart, and the copy lives in R2Dock's
+/// own folder. Blocking: reads the whole copy, asking `stop` between reads.
+pub(super) fn check_copy(c: &CompressedCopy, stop: &dyn Fn() -> bool) -> CopyCheck {
+    // Size and time tell whether the original changed. Its scan identity
+    // is checked when the original itself is uploaded (`restore_original`).
     let original_ok =
         SourceFile::open(&c.original_local, None).is_ok_and(|s| s.fingerprint == c.original);
     if !original_ok {
-        return true;
+        return CopyCheck::Unusable;
     }
     let Some(want) = &c.output else {
-        return true;
+        return CopyCheck::Unusable;
     };
-    if !want.file.matches(&c.temp) {
-        return true;
+    let same_shape = |f: &WrittenFile| f.len == want.file.len && f.mtime_ns == want.file.mtime_ns;
+    let quick = std::fs::symlink_metadata(&c.temp)
+        .is_ok_and(|m| m.is_file() && same_shape(&WrittenFile::of(&m)));
+    if !quick {
+        return CopyCheck::Unusable;
     }
-    !digest_written(&c.temp).is_ok_and(|(file, sha256)| file == want.file && sha256 == want.sha256)
+    match digest_written_until(&c.temp, stop) {
+        Ok(Some((file, sha256))) if same_shape(&file) && sha256 == want.sha256 => {
+            CopyCheck::Usable(file.identity)
+        }
+        Ok(None) => CopyCheck::Stopped,
+        _ => CopyCheck::Unusable,
+    }
 }
 
 // The interface matches this "Compression failed:" prefix (compressionNotice.ts).
@@ -333,6 +392,9 @@ async fn compress_job(
     if let End::Upload = compress(&inner, id, &control, spec, media).await {
         clear_control(&inner, id, &control);
         super::Hooks(inner.clone()).checkpoint(id);
+        // The result (copy, or why there is none) is kept for a restart,
+        // so an hour-long encode is not run again to reach the same answer.
+        inner.save_intent(id);
         inner.requeue_front(id);
     }
 }
@@ -466,6 +528,7 @@ async fn compress(
                 original: fingerprint,
                 preset: c.preset.clone(),
                 output: digest,
+                original_identity: spec.identity,
             };
             inner.set_result(id, |u| {
                 u.local = c.output.clone();
@@ -587,11 +650,11 @@ mod tests {
             Arc::new(NoClient),
             EngineConfig::new(data.path().to_path_buf()),
         );
-        engine.set_media(Some(MediaRuntime {
-            ffmpeg: Ffmpeg::new(bin),
-            work_dir: data.path().join("compress"),
-            encode_limit: 1,
-        }));
+        engine.set_media(Some(MediaRuntime::new(
+            Ffmpeg::new(bin),
+            data.path().join("compress"),
+            1,
+        )));
 
         // Something keeps writing to the file the whole time.
         let stop = Arc::new(AtomicBool::new(false));

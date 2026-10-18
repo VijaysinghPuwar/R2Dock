@@ -80,11 +80,9 @@ impl CompressionService {
     /// Give the engine the current tools and encode limit (or none).
     pub fn apply(&self, state: &AppState) {
         let limit = usize::from(state.settings.read().preferences.compression.encode_limit);
-        let media = self.ffmpeg().map(|ffmpeg| MediaRuntime {
-            ffmpeg,
-            work_dir: self.work_dir.clone(),
-            encode_limit: limit,
-        });
+        let media = self
+            .ffmpeg()
+            .map(|ffmpeg| MediaRuntime::new(ffmpeg, self.work_dir.clone(), limit));
         state.engine.set_media(media);
     }
 

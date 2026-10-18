@@ -24,6 +24,38 @@ use crate::source::SourceFile;
 /// Give up looking for a free "Keep both" name after this many tries.
 const KEEP_BOTH_LIMIT: u32 = 100;
 
+/// How long a paused multipart upload waits for its parts in flight before
+/// it stops them (an unfinished part is sent again on resume).
+const PAUSE_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// How long a cancelled upload's abort may take in the background.
+const ABORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+async fn sleep_until_opt(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(d) => tokio::time::sleep_until(d).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Abort a multipart upload without making the job wait: on a slow or
+/// flaky network the abort (with the SDK's own retries) can take seconds,
+/// and a cancelled job should read "Cancelled" at once. An abort that
+/// never succeeds is cleaned up by R2, which aborts incomplete multipart
+/// uploads after 7 days by default (PLAN.md 8.4).
+fn abort_in_background(ctx: &JobCtx, bucket: &str, key: &str, upload_id: &str) {
+    let client = ctx.client.clone();
+    let (bucket, key, upload_id) = (bucket.to_string(), key.to_string(), upload_id.to_string());
+    tokio::spawn(async move {
+        let abort = client.abort_multipart(&bucket, &key, &upload_id);
+        if !matches!(tokio::time::timeout(ABORT_TIMEOUT, abort).await, Ok(Ok(()))) {
+            tracing::debug!(
+                "a cancelled multipart upload could not be aborted; R2 removes it later"
+            );
+        }
+    });
+}
+
 fn b64(md5: &[u8; 16]) -> String {
     base64::engine::general_purpose::STANDARD.encode(md5)
 }
@@ -414,6 +446,7 @@ async fn multipart(
     let mut pending = todo.into_iter();
     let mut in_flight = FuturesUnordered::new();
     let mut failure: Option<JobError> = None;
+    let mut pause_deadline: Option<tokio::time::Instant> = None;
 
     loop {
         // Queue parts up to the per-job limit. Each part waits for a global
@@ -442,8 +475,15 @@ async fn multipart(
         if in_flight.is_empty() {
             break;
         }
+        // A pause lets the parts in flight finish (they are kept), but only
+        // for a short while: on a slow link that could take minutes.
+        if pause_deadline.is_none() && ctx.control.stop() == Stop::Pause {
+            pause_deadline = Some(tokio::time::Instant::now() + PAUSE_GRACE);
+        }
         let next = tokio::select! {
             () = ctx.control.cancel.cancelled(), if ctx.control.stop() == Stop::Cancel => None,
+            () = ctx.control.stopping.cancelled(), if ctx.control.stop() == Stop::None => Some(None),
+            () = sleep_until_opt(pause_deadline) => None,
             r = in_flight.next() => r,
         };
         match next {
@@ -468,10 +508,7 @@ async fn multipart(
 
     match ctx.control.stop() {
         Stop::Cancel => {
-            let _ = ctx
-                .client
-                .abort_multipart(&spec.bucket, &state.key, &state.upload_id)
-                .await;
+            abort_in_background(ctx, &spec.bucket, &state.key, &state.upload_id);
             ctx.clear_resume();
             return Err(JobError::cancelled());
         }
@@ -526,10 +563,7 @@ async fn multipart(
 
     // Last chance to honour a cancel before the object becomes visible.
     if ctx.control.stop() == Stop::Cancel {
-        let _ = ctx
-            .client
-            .abort_multipart(&spec.bucket, &state.key, &state.upload_id)
-            .await;
+        abort_in_background(ctx, &spec.bucket, &state.key, &state.upload_id);
         ctx.clear_resume();
         return Err(JobError::cancelled());
     }

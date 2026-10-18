@@ -156,4 +156,52 @@ describe("TransferRow", () => {
     expect(connectionSetActive).toHaveBeenCalledWith("conn-a");
     expect(client.getQueryData<ConnectionSummary[]>(qk.connections)?.find((c) => c.active)?.id).toBe("conn-a");
   });
+
+  it("shows Cancelling... at once and disables Pause and Cancel until the job stops", async () => {
+    const { usePendingStore, settlePending } = await import("./pendingStore");
+    usePendingStore.setState({ pending: {} });
+    const job = makeJob({ id: "c1", state: "running", pausable: true });
+    const first = renderWithProviders(<TransferRow job={job} />);
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(transferControl).toHaveBeenCalledWith("c1", { action: "cancel" });
+    expect(screen.getByText("Cancelling...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
+    // Other updates keep arriving while the engine stops the job.
+    first.unmount();
+    const verifying = { ...job, state: "verifying" as const };
+    settlePending([verifying]);
+    const second = renderWithProviders(<TransferRow job={verifying} />);
+    expect(screen.getByText("Cancelling...")).toBeInTheDocument();
+    second.unmount();
+    const cancelled = { ...job, state: "cancelled" as const };
+    settlePending([cancelled]);
+    renderWithProviders(<TransferRow job={cancelled} />);
+    expect(screen.queryByText("Cancelling...")).toBeNull();
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+  });
+
+  it("shows Pausing... and keeps Cancel available", async () => {
+    const { usePendingStore } = await import("./pendingStore");
+    usePendingStore.setState({ pending: {} });
+    const job = makeJob({ id: "p1", state: "compressing", pausable: true });
+    renderWithProviders(<TransferRow job={job} />);
+    await userEvent.click(screen.getByRole("button", { name: "Pause" }));
+    expect(screen.getByText("Pausing...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    // Cancel wins over a pause that has not landed yet.
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("Cancelling...")).toBeInTheDocument();
+  });
+
+  it("drops the pending state when the request fails", async () => {
+    const { usePendingStore } = await import("./pendingStore");
+    usePendingStore.setState({ pending: {} });
+    transferControl.mockImplementationOnce(() => Promise.reject(new Error("That action is not available for this transfer.")));
+    renderWithProviders(<TransferRow job={makeJob({ id: "f1", state: "running", pausable: true })} />);
+    await userEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await vi.waitFor(() => expect(screen.queryByText("Pausing...")).toBeNull());
+    expect(screen.getByRole("button", { name: "Pause" })).toBeEnabled();
+  });
 });

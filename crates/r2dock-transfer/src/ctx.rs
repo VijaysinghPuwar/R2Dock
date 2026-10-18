@@ -27,6 +27,9 @@ pub enum Stop {
 #[derive(Debug, Default)]
 pub struct RunControl {
     pub cancel: CancellationToken,
+    /// Fires on any pause or cancel request, so a job waiting for parts in
+    /// flight notices a pause without polling.
+    pub stopping: CancellationToken,
     stop: AtomicU8,
 }
 
@@ -40,6 +43,7 @@ impl RunControl {
         let _ = self
             .stop
             .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst);
+        self.stopping.cancel();
         if interrupt_streams {
             self.cancel.cancel();
         }
@@ -47,6 +51,7 @@ impl RunControl {
 
     pub fn request_cancel(&self) {
         self.stop.store(2, Ordering::SeqCst);
+        self.stopping.cancel();
         self.cancel.cancel();
     }
 
@@ -159,6 +164,8 @@ pub trait JobHooks: Send + Sync {
     fn total(&self, id: JobId, total: u64);
     /// Resume state changed and should be persisted.
     fn checkpoint(&self, id: JobId);
+    /// Write the resume journal to disk now (not batched). Blocking.
+    fn persist_now(&self);
 }
 
 pub struct JobCtx {

@@ -120,6 +120,10 @@ pub struct CompressedCopy {
     /// have none, so their copies are compressed again too.
     #[serde(default)]
     pub output: Option<CopyDigest>,
+    /// The original's identity from the scan, checked again when the
+    /// original is uploaded after all (older journals have none).
+    #[serde(default)]
+    pub original_identity: Option<crate::source::FileIdentity>,
 }
 
 /// Size, file identity, and SHA-256 of a verified compressed copy.
@@ -205,6 +209,9 @@ pub struct DownloadSpec {
     pub policy: ConflictPolicy,
 }
 
+// One spec per job, kept in the job map and the journals; uploads carry
+// their compression state inline. Boxing it would only add indirection.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum JobSpec {

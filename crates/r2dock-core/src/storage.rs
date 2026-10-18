@@ -39,16 +39,23 @@ pub enum Loaded<T> {
 
 /// Write `value` to `path` atomically.
 pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), StorageError> {
+    let bytes = serde_json::to_vec_pretty(value).map_err(|_| StorageError::Encode)?;
+    write_bytes_atomic(path, &bytes)
+}
+
+/// Write `bytes` to `path` atomically (temp file, flushed, renamed). For
+/// large machine-written files such as the transfer queue, where compact
+/// JSON is much smaller than pretty JSON.
+pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
     let dir = path
         .parent()
         .ok_or(StorageError::Io(io::ErrorKind::InvalidInput))?;
     fs::create_dir_all(dir)?;
-    let bytes = serde_json::to_vec_pretty(value).map_err(|_| StorageError::Encode)?;
     let mut tmp = tempfile::Builder::new()
         .prefix(".r2dock-")
         .suffix(".tmp")
         .tempfile_in(dir)?;
-    tmp.write_all(&bytes)?;
+    tmp.write_all(bytes)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path)
         .map_err(|e| StorageError::Io(e.error.kind()))?;

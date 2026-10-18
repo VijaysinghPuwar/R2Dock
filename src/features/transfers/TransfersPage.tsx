@@ -1,12 +1,12 @@
 import { ArrowDownUp, Pause, RotateCw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { transferClearFinished, transferPauseAll } from "../../ipc/commands";
+import { transferClearFinished } from "../../ipc/commands";
 import { Button } from "../../components/Button";
 import { SegmentedControl, Tabs } from "../../components/Controls";
 import { EmptyState } from "../../components/Feedback";
 import { joinDot } from "../../lib/format";
-import { controlMany, run } from "./actions";
+import { controlMany, pauseAll, run } from "./actions";
 import { buildItems, filterDirection, type DirectionFilter } from "./groups";
 import { InterruptedBanner } from "./InterruptedBanner";
 import { countTabs, type TransferTab } from "./stats";
@@ -70,7 +70,7 @@ export function TransfersPage() {
               { value: "download", label: "Downloads" },
             ]}
           />
-          <Button icon={<Pause size={16} />} onClick={() => run(transferPauseAll)} title="Only affects transfers that support pausing">
+          <Button icon={<Pause size={16} />} onClick={() => pauseAll(jobs)} title="Only affects transfers that support pausing">
             Pause all
           </Button>
           <Button icon={<Trash2 size={16} />} onClick={() => run(transferClearFinished)} disabled={counts.completed === 0}>

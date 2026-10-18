@@ -1,4 +1,9 @@
 // Tells the user when an upload with compression on goes up as the original.
+//
+// One toast per run of transfers: notices that arrive within about a second
+// share it. A big queue of long files decides file by file over hours, so
+// after that first toast the rest are only counted, and the summary toast
+// at the end of the run says how many more went up uncompressed.
 
 import type { JobSnapshot } from "../../ipc/bindings/JobSnapshot";
 import type { Unchanged } from "../../ipc/bindings/Unchanged";
@@ -65,18 +70,30 @@ export interface CompressionNotices {
   remember: (job: JobSnapshot) => void;
   /** Forget jobs that left the queue. */
   forget: (ids: Iterable<string>) => void;
+  /**
+   * The queue went idle: returns the jobs counted without a toast since the
+   * run's toast, and starts a new run.
+   */
+  endRun: () => Set<string>;
 }
 
 export function createCompressionNotices(show: (message: string) => void): CompressionNotices {
   const reported = new Set<string>();
   let pending: Notice[] = [];
   let timer: number | null = null;
+  /** This run already showed its toast. */
+  let told = false;
+  /** Uploads going up as the original that were not toasted. */
+  let quiet = new Set<string>();
 
   const flush = () => {
     timer = null;
     const notices = pending;
     pending = [];
-    if (notices.length > 0) show(message(notices));
+    if (notices.length > 0) {
+      told = true;
+      show(message(notices));
+    }
   };
 
   return {
@@ -91,6 +108,10 @@ export function createCompressionNotices(show: (message: string) => void): Compr
       const notice = noticeFor(job);
       if (!notice) return;
       reported.add(job.id);
+      if (told) {
+        if (!notice.stopped) quiet.add(job.id);
+        return;
+      }
       pending.push(notice);
       timer ??= window.setTimeout(flush, NOTICE_BATCH_MS);
     },
@@ -98,7 +119,21 @@ export function createCompressionNotices(show: (message: string) => void): Compr
       if (noticeFor(job)) reported.add(job.id);
     },
     forget: (ids) => {
-      for (const id of ids) reported.delete(id);
+      for (const id of ids) {
+        reported.delete(id);
+        quiet.delete(id);
+      }
+    },
+    endRun: () => {
+      // A toast still collecting shows now, before the run's summary.
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        flush();
+      }
+      const counted = quiet;
+      quiet = new Set();
+      told = false;
+      return counted;
     },
   };
 }

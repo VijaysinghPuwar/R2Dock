@@ -381,12 +381,12 @@ async fn early_compression_failure_starts_the_next_job() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
     engine.subscribe(Arc::new(move |e| sink.lock().push(e)));
-    engine.set_media(Some(MediaRuntime {
+    engine.set_media(Some(MediaRuntime::new(
         // Never run: the source cannot be opened.
-        ffmpeg: r2dock_media::ffmpeg::Ffmpeg::new(data.path().join("no-ffmpeg")),
-        work_dir: data.path().join("work"),
-        encode_limit: 1,
-    }));
+        r2dock_media::ffmpeg::Ffmpeg::new(data.path().join("no-ffmpeg")),
+        data.path().join("work"),
+        1,
+    )));
     tokio::time::sleep(Duration::from_millis(50)).await;
     let specs = (0..3)
         .map(|i| {

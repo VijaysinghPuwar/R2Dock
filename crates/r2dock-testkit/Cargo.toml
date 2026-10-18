@@ -10,6 +10,10 @@ publish = false
 [dependencies]
 s3s = "0.14"
 s3s-fs = "0.14"
+# Wraps the S3 service to shape the test network (already in the tree via hyper-util).
+hyper = { version = "1", features = ["server"] }
+http-body = "1"
+bytes = "1"
 hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "tokio", "http1", "http2"] }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "io-util", "time"] }
 tempfile.workspace = true

@@ -179,7 +179,7 @@ Hardware encoders use their constant-quality mode where available (`-q:v` for Vi
 | App crashes mid-encode | FFmpeg dies with the app (Windows Job Object; process group on macOS and Linux); stale temp files swept at startup |
 | Hardware encoder fails mid-file | One retry with the software encoder, then the original |
 | Laptop on battery | Optional setting "Pause compression on battery" (off by default) |
-| Many files at once | Encodes limited (default 1 at a time, below normal priority); uploads keep running in parallel as a pipeline |
+| Many files at once | Encodes limited (default 1 at a time, below normal priority: `BELOW_NORMAL_PRIORITY_CLASS` on Windows, `nice -n 10` on macOS and Linux); uploads keep running in parallel as a pipeline. Encodes run ahead of uploads only until finished copies fill the upload slots plus one per encoder (and stay under 4 GiB), so 100 long files never pile up 100 copies on disk. Files waiting for the encoder never hold upload slots from other files. See `docs/benchmarks/2026-10-18-compression-at-scale.md` |
 | Read-only key | Uploads are blocked as today; nothing is compressed |
 | Upload fails after compression | The temp file is kept for retry and deleted when the job finishes or is dismissed |
 

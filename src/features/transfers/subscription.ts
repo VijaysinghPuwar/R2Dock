@@ -12,6 +12,7 @@ import { toast } from "../../components/toastStore";
 import { folderLabel, parentPrefix } from "../../lib/keys";
 import { plural } from "../../lib/format";
 import { createCompressionNotices } from "./compressionNotice";
+import { settlePending, usePendingStore } from "./pendingStore";
 import { isMoving, isTerminal } from "./stats";
 import { useTransferStore } from "./transferStore";
 
@@ -59,15 +60,18 @@ function scheduleRefresh(client: QueryClient) {
   }, REFRESH_MS);
 }
 
-function summarize(client: QueryClient, direction: Direction, jobs: JobSnapshot[]) {
+function summarize(client: QueryClient, direction: Direction, jobs: JobSnapshot[], quiet: Set<string>) {
   const completed = jobs.filter((j) => j.state === "completed");
   const failed = jobs.filter((j) => j.state === "failed");
   const skipped = jobs.filter((j) => j.state === "skipped").length;
   if (completed.length === 0 && failed.length === 0) return;
   const verb = direction === "upload" ? "Uploaded" : "Downloaded";
+  // Files that went up uncompressed after the first notice of this batch.
+  const more = completed.filter((j) => quiet.has(j.id)).length;
+  const moreText = more > 0 ? ` ${plural(more, "more file")} went up uncompressed.` : "";
   if (failed.length > 0) {
     const total = completed.length + failed.length;
-    toast.danger(`${verb} ${completed.length} of ${plural(total, "file")}. ${failed.length} failed.`, {
+    toast.danger(`${verb} ${completed.length} of ${plural(total, "file")}. ${failed.length} failed.${moreText}`, {
       label: "Retry failed",
       run: () => {
         transferControlMany(
@@ -78,7 +82,7 @@ function summarize(client: QueryClient, direction: Direction, jobs: JobSnapshot[
     });
     return;
   }
-  const skippedText = skipped > 0 ? ` ${skipped} skipped.` : "";
+  const skippedText = (skipped > 0 ? ` ${skipped} skipped.` : "") + moreText;
   if (direction === "upload") {
     const first = completed[0];
     const sameBucket = first && completed.every((j) => j.bucket === first.bucket && j.connectionId === first.connectionId);
@@ -101,6 +105,7 @@ function afterEvent(client: QueryClient, before: Record<string, JobSnapshot>, ev
 
   // A snapshot replaces every job, so forget ids it no longer lists.
   if (event.type === "snapshot") moving.clear();
+  settlePending(touched);
   for (const job of touched) {
     const prev = before[job.id];
     // A snapshot restores jobs from before; anything about them was already said.
@@ -135,6 +140,7 @@ function afterEvent(client: QueryClient, before: Record<string, JobSnapshot>, ev
   if (event.type === "removed") {
     for (const id of event.ids) moving.delete(id);
     compressionNotices.forget(event.ids);
+    usePendingStore.getState().clear(event.ids);
   }
   if (batch.size === 0 || moving.size > 0) return; // still working
   const batchJobs: JobSnapshot[] = [];
@@ -147,9 +153,10 @@ function afterEvent(client: QueryClient, before: Record<string, JobSnapshot>, ev
     if (job) batchJobs.push(job);
   }
   batch.clear();
+  const quiet = compressionNotices.endRun();
   for (const direction of ["upload", "download"] as const) {
     const jobs = batchJobs.filter((j) => j.direction === direction && isTerminal(j.state));
-    if (jobs.length > 0) summarize(client, direction, jobs);
+    if (jobs.length > 0) summarize(client, direction, jobs, quiet);
   }
 }
 
