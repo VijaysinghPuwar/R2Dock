@@ -6,7 +6,7 @@
 
 use r2dock_core::keys::{base_name, validate_name};
 use r2dock_core::{AppError, ErrorCode};
-use r2dock_r2::bulk::{collect_objects, delete_keys, move_items, plan_move};
+use r2dock_r2::bulk::{PlanError, collect_objects, delete_keys, move_items, plan_move};
 use tauri::State;
 use tauri::ipc::Channel;
 use tokio_util::sync::CancellationToken;
@@ -133,8 +133,15 @@ async fn move_preview_inner(
         collect_objects(&c, &b, &k, &p, &CancellationToken::new()).await
     })
     .await?;
-    let items = plan_move(&objects, &keys, &prefixes, &dest_prefix, rename.as_deref())
-        .map_err(|e| AppError::invalid_input(e.to_string()))?;
+    let items =
+        plan_move(&objects, &keys, &prefixes, &dest_prefix, rename.as_deref()).map_err(|e| {
+            let err = AppError::invalid_input(e.to_string());
+            // The message embeds an object key; mark it for log privacy.
+            match e {
+                PlanError::DuplicateDestination(key) => err.with_name(key),
+                _ => err,
+            }
+        })?;
     if items.is_empty() {
         return Err(AppError::invalid_input(
             "Nothing to move: the items are already there.",
