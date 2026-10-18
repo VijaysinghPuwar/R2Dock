@@ -45,9 +45,14 @@ fn redact_account_hosts(input: &str) -> String {
     let mut idx = 0;
     while let Some(p) = lower[idx..].find(R2_HOST) {
         let pos = idx + p;
+        // The host starts right after the last character that cannot be part
+        // of a host name. That character may be multi-byte, so step past it by
+        // its UTF-8 length rather than by one byte.
         let host_start = lower[..pos]
-            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-'))
-            .map_or(0, |i| i + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| !(c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+            .map_or(0, |(i, c)| i + c.len_utf8());
         if host_start < pos && host_start >= idx {
             out.push_str(&input[idx..host_start]);
             out.push_str(ACCOUNT);
@@ -164,6 +169,64 @@ mod tests {
             redact_text("see r2.cloudflarestorage.com docs"),
             "see r2.cloudflarestorage.com docs"
         );
+    }
+
+    #[test]
+    fn unicode_next_to_hosts_and_markers_does_not_panic() {
+        let account = "0123456789abcdef0123456789abcdef";
+        let cases: &[(&str, &str)] = &[
+            (
+                "\u{e9}account.r2.cloudflarestorage.com",
+                "\u{e9}[ACCOUNT].r2.cloudflarestorage.com",
+            ),
+            (
+                "\u{4e2d}.r2.cloudflarestorage.com",
+                "\u{4e2d}[ACCOUNT].r2.cloudflarestorage.com",
+            ),
+            (
+                "\u{4e2d}r2.cloudflarestorage.com",
+                "\u{4e2d}r2.cloudflarestorage.com",
+            ),
+            (
+                "\u{1f600}x.r2.cloudflarestorage.com/\u{1f600}",
+                "\u{1f600}[ACCOUNT].r2.cloudflarestorage.com/\u{1f600}",
+            ),
+            ("r2.cloudflarestorage.com", "r2.cloudflarestorage.com"),
+            ("", ""),
+            ("\u{e9}secret=\u{e9}\u{e9} ok", "\u{e9}secret=[REDACTED] ok"),
+            ("token=\u{4e2d}&x=\u{4e2d}", "token=[REDACTED]&x=\u{4e2d}"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(redact_text(input), *expected, "input {input:?}");
+        }
+        let multi = format!(
+            "\u{e9}{account}.r2.cloudflarestorage.com and \u{4e2d}{account}.eu.r2.cloudflarestorage.com"
+        );
+        let out = redact_text(&multi);
+        assert!(!out.contains(account), "{out}");
+        assert_eq!(out.matches("[ACCOUNT].").count(), 2, "{out}");
+        let ctl = format!("\u{7}{account}.r2.cloudflarestorage.com\u{0}");
+        assert!(!redact_text(&ctl).contains(account));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn redaction_is_total_over_utf8(
+            prefix in "\\PC{0,12}",
+            host in "[a-z0-9.\u{e9}\u{4e2d}-]{0,12}",
+            suffix in "\\PC{0,12}",
+            marker in proptest::sample::select(vec!["", "secret=", "token=", "Authorization: ", "r2.cloudflarestorage.com"]),
+        ) {
+            let text = format!("{prefix}{host}.r2.cloudflarestorage.com{marker}{suffix}");
+            let out = redact_text(&text);
+            proptest::prop_assert!(out.contains("r2.cloudflarestorage.com"));
+        }
+
+        #[test]
+        fn known_account_is_always_masked(prefix in "\\PC{0,8}", account in "[a-f0-9]{32}") {
+            let out = redact_text(&format!("{prefix} {account}.r2.cloudflarestorage.com"));
+            proptest::prop_assert!(!out.contains(&account), "{}", out);
+        }
     }
 
     #[test]
