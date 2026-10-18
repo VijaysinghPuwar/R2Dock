@@ -142,24 +142,27 @@ Rules:
 | `border.strong` | `#4D4B55` | `#B5AB99` | Hovered inputs |
 | `text.primary` | `#F2EADB` | `#2A2722` | Main text (warm cream on dark) |
 | `text.secondary` | `#B8AE9B` | `#5E574B` | Metadata, labels |
-| `text.muted` | `#7F786D` | `#8C8475` | Placeholders, disabled text |
+| `text.muted` | `#A39A8A` | `#6D6558` | Helper text, placeholders, disabled text |
 | `text.onAccent` | `#1E1D22` | `#FFFFFF` | Text on amber fills |
-| `accent.default` | `#F4A836` | `#A86A1E` | Primary buttons, active progress |
+| `text.onDanger` | `#1E1D22` | `#FFFFFF` | Text on destructive button fills |
+| `accent.default` | `#F4A836` | `#A6691E` | Primary buttons, active progress |
 | `accent.hover` | `#F7B955` | `#935C18` | Primary button hover |
 | `accent.pressed` | `#DB9324` | `#7C4D13` | Primary button pressed |
 | `accent.text` | `#F6B652` | `#8F5A17` | Links, accent text |
 | `accent.subtle` | `#3D3121` | `#F1E2C6` | Drop zone fill, accent badges |
 | `focus.ring` | `#F6B652` | `#A86A1E` | Keyboard focus outline |
-| `success.default` | `#8FBF7A` | `#3F7A35` | Completed transfers |
+| `success.default` | `#8FBF7A` | `#3B7232` | Completed transfers |
 | `success.subtle` | `#253122` | `#E3EEDC` | Success badge background |
-| `warning.default` | `#D8C25B` | `#7D6A12` | Paused, needs attention |
+| `warning.default` | `#D8C25B` | `#776511` | Paused, needs attention |
 | `warning.subtle` | `#33301C` | `#F2ECCD` | Warning banner background |
-| `danger.default` | `#E06C5A` | `#A93A2B` | Errors, destructive buttons |
+| `danger.default` | `#E47F6F` | `#A93A2B` | Errors, destructive buttons |
+| `danger.hover` | `#E98F81` | `#B84D3F` | Destructive button hover |
+| `danger.pressed` | `#D26553` | `#93311F` | Destructive button pressed |
 | `danger.subtle` | `#3A2420` | `#F5DEDA` | Error banner background |
 | `info.default` | `#7FA7C9` | `#3A6690` | Informational notices |
 | `info.subtle` | `#1F2A33` | `#DEE7EF` | Info banner background |
 
-Contrast targets (WCAG 2.2 AA): body text 4.5:1, large text and component boundaries 3:1. Cream `#F2EADB` on `#1E1D22` and `#25242A` is well above 4.5:1. Amber `#F4A836` is used as a fill with dark `text.onAccent`, not as small text on dark grey; `text.muted` is for placeholders and disabled text only. All pairs must be checked with a contrast tool during design review.
+Contrast targets (WCAG 2.2 AA): body text 4.5:1, large text and component boundaries 3:1. Cream `#F2EADB` on `#1E1D22` and `#25242A` is well above 4.5:1. Amber `#F4A836` is used as a fill with dark `text.onAccent`, not as small text on dark grey. In the dark theme the destructive button uses dark `text.onDanger` the same way. Every text token (`text.*`, `accent.text`, and the status colors) meets 4.5:1 on every `bg.*` token, and text on filled controls and tinted badges meets 4.5:1 in default, hover, and pressed states. `src/styles/contrast.test.ts` computes these ratios from `tokens.css`, so a token change that breaks a pair fails the tests.
 
 File-type icon tints (small icons only, never text). Kept low saturation so the list stays calm:
 
