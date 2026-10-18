@@ -186,8 +186,10 @@ async fn unreachable_server_is_a_network_error() {
         .local_addr()
         .unwrap()
         .port();
+    // Windows retries a refused connection for about 2 seconds before it
+    // reports it, so the limit must be longer than that.
     let client =
-        CfApiClient::with_base_url(&format!("http://127.0.0.1:{port}"), Duration::from_secs(2))
+        CfApiClient::with_base_url(&format!("http://127.0.0.1:{port}"), Duration::from_secs(10))
             .unwrap();
     let err = client
         .bucket_domains(ACCOUNT, "media-library", Jurisdiction::Default, &token())
