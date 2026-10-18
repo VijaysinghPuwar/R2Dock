@@ -188,13 +188,27 @@ fn multichannel_veto_comes_before_speech() {
         ContentOverride::Music,
     ] {
         assert_eq!(
-            skip(plan_audio(&surround, &settings(), AudioInputs { content })),
+            skip(plan_audio(
+                &surround,
+                &settings(),
+                AudioInputs {
+                    content,
+                    ..AudioInputs::default()
+                }
+            )),
             SkipReason::Multichannel { channels: 6 },
             "{content:?}"
         );
         let smallest = with(|s| s.mode = Mode::Smallest);
         assert_eq!(
-            skip(plan_audio(&surround, &smallest, AudioInputs { content })),
+            skip(plan_audio(
+                &surround,
+                &smallest,
+                AudioInputs {
+                    content,
+                    ..AudioInputs::default()
+                }
+            )),
             SkipReason::Multichannel { channels: 6 },
             "{content:?} smallest"
         );
@@ -203,11 +217,30 @@ fn multichannel_veto_comes_before_speech() {
     assert_eq!(target(run(&surround, &downmix)).channels, 1, "speech");
     let music = AudioInputs {
         content: ContentOverride::Music,
+        ..AudioInputs::default()
     };
     assert_eq!(
         target(plan_audio(&surround, &downmix, music)).channels,
         2,
         "music"
+    );
+}
+
+#[test]
+fn proven_identical_channels_become_mono_without_permission() {
+    let talk = probe(AudioCodec::Mp3, 22_050, 2, 128, HOUR);
+    let proven = AudioInputs {
+        identical_channels: true,
+        ..AudioInputs::default()
+    };
+    let t = target(plan_audio(&talk, &settings(), proven));
+    assert_eq!((t.encoding, t.channels), (Encoding::Mp3Cbr { kbps: 32 }, 1));
+    // Never for more than two channels: identical left and right say
+    // nothing about the others.
+    let surround = probe(AudioCodec::Pcm, 22_050, 6, 2117, 300.0);
+    assert_eq!(
+        skip(plan_audio(&surround, &settings(), proven)),
+        SkipReason::Multichannel { channels: 6 }
     );
 }
 
@@ -287,6 +320,7 @@ fn smallest_mode() {
         &s,
         AudioInputs {
             content: ContentOverride::Music,
+            ..AudioInputs::default()
         },
     ));
     assert_eq!(t.encoding, Encoding::Opus { kbps: 64 });
@@ -333,6 +367,7 @@ fn never_raises_sample_rate() {
         &settings(),
         AudioInputs {
             content: ContentOverride::Music,
+            ..AudioInputs::default()
         },
     ));
     assert_eq!(t.sample_rate, Some(32_000));

@@ -231,3 +231,22 @@ fn rejects_relative_paths_and_unknown_containers() {
     );
     assert_eq!(Container::from_path(&abs("A.M4B")), Some(Container::Ipod));
 }
+
+#[test]
+fn channel_difference_reads_the_whole_stream() {
+    let args = text(&channel_difference(&abs("in.mp3")).unwrap());
+    assert_eq!(after(&args, "-af"), Some("pan=mono|c0=c0-c1,volumedetect"));
+    assert_eq!(after(&args, "-map"), Some("0:a:0"));
+    assert!(
+        !args.contains(&"-ss".to_string()),
+        "no window: the whole file"
+    );
+    assert!(!args.contains(&"-t".to_string()));
+    assert_eq!(after(&args, "-progress"), Some("pipe:1"));
+    assert_eq!(after(&args, "-f"), Some("null"));
+    assert_eq!(args.last().map(String::as_str), Some("-"));
+    assert_eq!(
+        channel_difference(Path::new("in.mp3")),
+        Err(ArgsError::RelativePath)
+    );
+}

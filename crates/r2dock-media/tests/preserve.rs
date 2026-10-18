@@ -609,3 +609,212 @@ async fn audiobook_with_chapters_and_cover_still_compresses() {
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&chapters.stdout).lines().count(), 2);
 }
+
+/// Speech-like audio at 22.05 kHz (counts as speech), as a lavfi graph.
+fn speech_graph(secs: u32) -> String {
+    format!(
+        "sine=f=220:r=22050:d={secs},volume=0.4[a];anoisesrc=r=22050:d={secs}:a=0.05[n];[a][n]amix=inputs=2"
+    )
+}
+
+async fn output_channels(ff: &Ffmpeg, p: Prepared) -> u32 {
+    let Prepared::Compressed(c) = p else {
+        panic!("expected compression, got {p:?}");
+    };
+    inventory(ff, &c.output)
+        .await
+        .audio()
+        .next()
+        .unwrap()
+        .channels
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn identical_stereo_speech_becomes_mono() {
+    let Some((ff, _)) = tools().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let graph = speech_graph(120);
+    // The same signal in both channels, as WAV and as joint-stereo MP3.
+    let wav = dir.path().join("talk.wav");
+    make(
+        &ff.bin,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            &graph,
+            "-ac",
+            "2",
+            "-c:a",
+            "pcm_s16le",
+            s(&wav),
+        ],
+    );
+    let mp3 = dir.path().join("talk.mp3");
+    make(
+        &ff.bin,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            &graph,
+            "-ac",
+            "2",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "128k",
+            s(&mp3),
+        ],
+    );
+    let token = CancellationToken::new();
+    for input in [&wav, &mp3] {
+        assert!(
+            ff.channels_identical(input, &token).await.unwrap(),
+            "{input:?}"
+        );
+        let work = dir.path().join(format!(
+            "work-{}",
+            input.extension().unwrap().to_str().unwrap()
+        ));
+        assert_eq!(
+            output_channels(&ff, run(&ff, input, &work).await).await,
+            1,
+            "{input:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn speech_that_only_matches_in_the_middle_stays_stereo() {
+    let Some((ff, _)) = tools().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("edges.wav");
+    // 22.05 kHz, so it is speech and gets the channel check. Left and right
+    // match except in the first and last 10 seconds, where they are opposite.
+    make(
+        &ff.bin,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "aevalsrc=0.3*sin(2*PI*440*t)|if(lt(t\\,10)+gte(t\\,50)\\,-0.3*sin(2*PI*440*t)\\,0.3*sin(2*PI*440*t)):s=22050:d=60",
+            "-c:a",
+            "pcm_s16le",
+            s(&input),
+        ],
+    );
+    let token = CancellationToken::new();
+    assert!(!ff.channels_identical(&input, &token).await.unwrap());
+    let Prepared::Compressed(c) = run(&ff, &input, dir.path()).await else {
+        panic!("expected compression");
+    };
+    assert_eq!(
+        inventory(&ff, &c.output)
+            .await
+            .audio()
+            .next()
+            .unwrap()
+            .channels,
+        2
+    );
+    for channel in [0, 1] {
+        let intro = mean_volume(&ff.bin, &c.output, 0.0, 5.0, channel);
+        assert!(intro > -30.0, "intro audible on c{channel}: {intro} dB");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn channel_check_can_be_cancelled() {
+    let Some((ff, _)) = tools().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    // 40 minutes of stereo speech: long enough that the check is still
+    // running when it is cancelled.
+    let input = dir.path().join("long.mp3");
+    make(
+        &ff.bin,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            &speech_graph(2400),
+            "-ac",
+            "2",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "96k",
+            s(&input),
+        ],
+    );
+    let token = CancellationToken::new();
+    let cancel = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        cancel.cancel();
+    });
+    let started = std::time::Instant::now();
+    let err = ff.channels_identical(&input, &token).await.unwrap_err();
+    assert!(err.is_cancelled(), "{err:?}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+
+    // Cancelling the whole preparation during the check stops it too.
+    let token = CancellationToken::new();
+    let cancel = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        cancel.cancel();
+    });
+    let result = prepare(
+        &ff,
+        PrepareJob {
+            input: &input,
+            work_dir: &dir.path().join("work"),
+            stem: "job",
+            settings: &AudioSettings::default(),
+            video: &VideoSettings::default(),
+            content: ContentOverride::Auto,
+        },
+        &token,
+        |_| {},
+    )
+    .await;
+    assert!(result.is_err_and(|e| e.is_cancelled()));
+}
+
+/// The cost of the whole-stream check on an hour of stereo speech (manual):
+/// `R2DOCK_TEST_FFMPEG=... cargo test -p r2dock-media --release --test
+/// preserve channel_check_cost -- --ignored --nocapture`
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "manual measurement; encodes an hour of audio first"]
+async fn channel_check_cost() {
+    let Some((ff, _)) = tools().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("hour.mp3");
+    make(
+        &ff.bin,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            &speech_graph(3600),
+            "-ac",
+            "2",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "64k",
+            s(&input),
+        ],
+    );
+    let started = std::time::Instant::now();
+    let same = ff
+        .channels_identical(&input, &CancellationToken::new())
+        .await
+        .unwrap();
+    eprintln!(
+        "60 min stereo MP3 (64 kbps, 22.05 kHz): identical={same} in {:.2} s",
+        started.elapsed().as_secs_f64()
+    );
+    assert!(same);
+}

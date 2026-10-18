@@ -21,6 +21,10 @@ pub use r2dock_core::compression::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AudioInputs {
     pub content: ContentOverride,
+    /// Left and right are identical over the whole stream (proven by
+    /// decoding all of it, see `Ffmpeg::channels_identical`). Mono then
+    /// loses nothing, so no downmix permission is needed.
+    pub identical_channels: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,10 +234,13 @@ fn decide(
     }
     let content = classify(probe, inputs.content);
     let source_channels = probe.channels.unwrap_or(2);
-    // Channels are only ever reduced when the user allows it: a mono mix
-    // can erase sound that differs between channels. With permission,
-    // speech becomes mono and anything else at most stereo.
-    let mono = source_channels == 1 || (s.allow_downmix && content == Content::Speech);
+    // Channels are only reduced when that loses nothing (left and right
+    // proven identical) or the user allows it: a mono mix erases sound that
+    // differs between channels. With permission, speech becomes mono and
+    // anything else at most stereo.
+    let mono = source_channels == 1
+        || (source_channels == 2 && inputs.identical_channels)
+        || (s.allow_downmix && content == Content::Speech);
     let (encoding, extension) = ladder(probe, content, mono, s)?;
     let channels = match encoding {
         // Lossless output keeps every channel.

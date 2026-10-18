@@ -63,8 +63,14 @@ Listening samples of every option were produced for the user to choose the defau
 ### Classify
 
 - **Speech or music**: speech if mono, or sample rate 24 kHz or lower, or real bitrate 64 kbps or lower; otherwise music. The user can override per upload ("Treat as speech / music").
-- **Channels**: kept as they are unless the downmix setting allows it (`allowDownmix`, off by default; Settings does not show it yet). The automatic duplicated-stereo check (a 30 second sample from the middle) was removed after 0.4.1: a sample cannot prove the channels match over the whole file, and a mono mix erases sound that differs between channels (a test file with opposite intro channels lost its intro entirely). Keeping the channels costs some saving; it never loses content.
+- **Channels**: kept as they are, with two exceptions. (1) **Identical stereo**: for stereo speech that would be compressed anyway, FFmpeg decodes the whole first audio track once and measures left minus right (`pan=mono|c0=c0-c1,volumedetect`). If the loudest difference over the entire stream is at or below -60 dBFS, the file is encoded as mono. No information is lost, so this needs no setting. A sample is never enough: the earlier 30 second middle sample (removed after 0.4.1) folded a test file whose opposite-phase intro then disappeared; that file stays stereo now. (2) **Downmix setting** ("Mix multichannel audio down to stereo or mono" in Settings > Compression, off by default): multichannel audio becomes stereo (mono for speech) and stereo speech becomes mono even when the channels differ.
 - **Lossless source** (WAV, AIFF, FLAC, ALAC): always worth compressing; the only question is the format (see WAV setting).
+
+Threshold and cost of the identical-channel check, measured with FFmpeg 9.0.1 on an Apple M5 (single runs, synthetic speech):
+
+- Decoded left minus right of the same signal in both channels: WAV and MP3 at 128 kbps (joint stereo or plain stereo) peak at -91 dB, so they become mono. The same signal encoded as AAC 96 kbps peaks at -31 dB and as Opus 64 kbps at -51 dB, so those stay stereo: -60 dBFS is conservative and accepts only near bit-exact matches.
+- One hour of stereo MP3 (64 kbps, 22.05 kHz): 2.1 s for the whole-stream check. Decoding scales with length, so a 24 hour audiobook should take under a minute (estimated, not measured). The check runs only for stereo speech that would otherwise be compressed, uses the same runner, watchdog, and cancellation as encodes, and a check that fails keeps both channels.
+- The upload review estimate and Compare quality do not run the check, so they show the stereo size; the real result can be smaller.
 
 ### Bitrate ladder (Keep format)
 
@@ -78,7 +84,7 @@ Listening samples of every option were produced for the user to choose the defau
 
 Smallest mode: speech becomes Opus 24 kbps mono or 48 kbps stereo (`-application voip`), music becomes Opus 96 kbps stereo (64 kbps mono).
 
-The target is always capped at the source: R2Dock never raises bitrate, sample rate, or channel count. It lowers the channel count only when the user allows downmix: then multichannel audio becomes stereo (mono for speech) and stereo speech becomes mono. Without that permission, audio with more than two channels is uploaded unchanged ("6-channel audio kept"), checked before any speech or music rule.
+The target is always capped at the source: R2Dock never raises bitrate, sample rate, or channel count. Without the downmix setting, audio with more than two channels is uploaded unchanged ("6-channel audio kept"), checked before any speech or music rule, and stereo is reduced to mono only when the whole-stream check proves the channels identical.
 
 ### Keep everything that matters
 
@@ -324,5 +330,5 @@ Changes from the plan made during step 6 (measurements in [docs/benchmarks/2026-
 Changes after 0.4.1 (content preservation):
 
 - Stream inventory before planning and after encoding (see "Keep every track"). Files with a second audio or video track or unconvertible subtitles, which earlier versions compressed while dropping those tracks, are now uploaded unchanged. A copy whose tracks do not match the plan is replaced by the original with a reason, not a failure.
-- Channels are never reduced without the downmix setting. The sampled duplicated-stereo check is gone, the multichannel check runs before the speech rule (six-channel 22.05 kHz audio was planned as mono), and stereo speech stays stereo at twice the mono bitrate.
+- Channels are never reduced without the downmix setting, except stereo speech whose channels are proven identical over the whole stream. The sampled check is replaced by a whole-stream decode, the multichannel check runs before the speech rule (six-channel 22.05 kHz audio was planned as mono), and stereo speech with different channels stays stereo at twice the mono bitrate. The downmix setting is now shown in Settings.
 - Compare quality labels each sample by what it really is (for example "AAC 64 kbps, mono"), and presets that produce the same encoding share one sample. Before, an M4A got two "MP3" labels on two identical AAC encodes.

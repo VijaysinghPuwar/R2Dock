@@ -288,6 +288,12 @@ export function CompressionSection() {
           ]}
         />
       </ControlRow>
+      <Switch
+        label="Mix multichannel audio down to stereo or mono"
+        description="Smaller files, but sound that differs between channels can be lost. When off, every channel is kept (stereo whose channels are identical still becomes mono)."
+        checked={c.audio.allowDownmix}
+        onChange={(allowDownmix) => setAudio({ allowDownmix })}
+      />
       <ControlRow
         label="Video"
         helper={

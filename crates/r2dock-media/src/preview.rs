@@ -89,6 +89,7 @@ fn targets(probe: &AudioProbe, content: Content, base: AudioSettings) -> Vec<Aud
             Content::Speech => ContentOverride::Speech,
             Content::Music => ContentOverride::Music,
         },
+        ..AudioInputs::default()
     };
     let mut out: Vec<AudioTarget> = Vec::new();
     for settings in variants(content, base) {

@@ -151,6 +151,20 @@ describe("CompressionSection", () => {
     expect(screen.getByLabelText("Speech 32 kbps (MP3) sample")).toHaveAttribute("src", expect.stringContaining("b".repeat(32)));
   });
 
+  it("keeps every channel unless downmix is turned on", async () => {
+    m.status.mockResolvedValue(ready);
+    const user = userEvent.setup();
+    setup();
+    const sw = screen.getByRole("switch", { name: /Mix multichannel audio down to stereo or mono/ });
+    expect(sw).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByText(/every channel is kept/)).toBeInTheDocument();
+    await user.click(sw);
+    await waitFor(() => expect(m.settingsSet).toHaveBeenCalled());
+    const saved = m.settingsSet.mock.calls.at(-1)![0] as Preferences;
+    expect(saved.compression.audio.allowDownmix).toBe(true);
+    expect(saved.compression.enabled).toBe(false);
+  });
+
   it("saves the video choices", async () => {
     m.status.mockResolvedValue(ready);
     const user = userEvent.setup();

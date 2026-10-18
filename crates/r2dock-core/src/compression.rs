@@ -61,7 +61,8 @@ pub struct AudioSettings {
     pub min_saving_percent: u8,
     /// Allow fewer channels: 5.1 and other multichannel audio mixed down to
     /// stereo (or mono for speech), and stereo speech mixed to mono. Off by
-    /// default, so every channel is kept.
+    /// default: channels are kept, except stereo whose two channels are
+    /// proven identical, which becomes mono without losing anything.
     pub allow_downmix: bool,
 }
 

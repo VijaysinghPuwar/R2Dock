@@ -202,5 +202,34 @@ pub fn encode_audio(
     Ok(a)
 }
 
+/// Arguments that decode the whole first audio track and print the loudest
+/// difference between left and right (`max_volume` in the log). Silence
+/// means the channels are identical everywhere. Progress goes to stdout, so
+/// the watchdog sees a long decode is alive.
+pub fn channel_difference(input: &Path) -> Result<Vec<OsString>, ArgsError> {
+    let mut a: Vec<OsString> = ["-hide_banner", "-nostdin", "-loglevel", "info"]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    push(&mut a, &["-protocol_whitelist", "file", "-i"]);
+    a.push(file_url(input)?);
+    push(
+        &mut a,
+        &[
+            "-map",
+            "0:a:0",
+            "-af",
+            "pan=mono|c0=c0-c1,volumedetect",
+            "-progress",
+            "pipe:1",
+            "-nostats",
+            "-f",
+            "null",
+            "-",
+        ],
+    );
+    Ok(a)
+}
+
 #[cfg(test)]
 mod tests;

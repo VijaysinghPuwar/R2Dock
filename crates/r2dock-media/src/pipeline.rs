@@ -1,5 +1,6 @@
 //! The whole decision for one file, cheapest checks first:
-//! probe, track inventory, plan, sample test, disk space, encode, verify,
+//! probe, track inventory, plan, whole-stream channel check for stereo
+//! speech, sample test, disk space, encode, verify,
 //! and the final size check. Anything that does not pay off leaves the file
 //! unchanged with a reason the interface can show.
 
@@ -9,13 +10,13 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
 
-use crate::classify::ContentOverride;
+use crate::classify::{Content, ContentOverride};
 use crate::ffmpeg::{EncodeError, Ffmpeg, SAMPLE_TEST_MIN_SECS};
 use crate::keys::output_key;
 use crate::plan::{
     AudioDecision, AudioInputs, AudioSettings, AudioTarget, Encoding, SkipReason, plan_audio,
 };
-use crate::probe::{ProbeError, probe_audio};
+use crate::probe::{AudioProbe, ProbeError, probe_audio};
 use crate::streams::{Expected, ExpectedAudio, audio_only_supported, check};
 use crate::video::probe::probe_video;
 
@@ -84,6 +85,15 @@ fn output_extension(input: &Path, target: &AudioTarget) -> String {
         Encoding::Opus { .. } => "opus".into(),
         Encoding::Flac => "flac".into(),
     }
+}
+
+/// Whether the planned stereo speech target is worth the whole-stream
+/// channel check (only lossy targets: FLAC keeps every channel).
+fn wants_channel_check(probe: &AudioProbe, target: &AudioTarget) -> bool {
+    probe.channels == Some(2)
+        && target.channels == 2
+        && target.content == Content::Speech
+        && target.encoding != Encoding::Flac
 }
 
 fn percent(saving: f64) -> u8 {
@@ -173,10 +183,31 @@ pub async fn prepare(
         }
     }
 
-    let target = match plan_audio(&probe, settings, AudioInputs { content }) {
+    let mut inputs = AudioInputs {
+        content,
+        ..AudioInputs::default()
+    };
+    let mut target = match plan_audio(&probe, settings, inputs) {
         AudioDecision::Compress(t) => t,
         AudioDecision::Skip(reason) => return Ok(Prepared::Unchanged(Unchanged::Plan { reason })),
     };
+    // Stereo speech that is really mono (both channels the same) is stored
+    // once. Only for files that will be compressed anyway, and only when the
+    // whole stream proves it: then a mono copy loses nothing.
+    if wants_channel_check(&probe, &target) {
+        let identical = match ff.channels_identical(input, cancel).await {
+            Ok(same) => same,
+            Err(e) if e.is_cancelled() => return Err(e),
+            // A check that cannot run proves nothing: keep both channels.
+            Err(_) => false,
+        };
+        if identical {
+            inputs.identical_channels = true;
+            if let AudioDecision::Compress(t) = plan_audio(&probe, settings, inputs) {
+                target = t;
+            }
+        }
+    }
 
     std::fs::create_dir_all(work_dir).map_err(|e| {
         EncodeError::Failed(format!("could not create the work folder: {}", e.kind()))
@@ -259,7 +290,6 @@ pub fn upload_key(original_key: &str, prepared: &Compressed) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::classify::Content;
 
     fn target(encoding: Encoding, extension: Option<&str>) -> AudioTarget {
         AudioTarget {
