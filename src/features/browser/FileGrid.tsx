@@ -101,7 +101,7 @@ export function FileGrid({
         <div key={row.id} role="gridcell" className="tile is-ghost" style={{ width: tileSize, height: tileSize }}>
           <FileIcon name={row.name} size={tileSize > 120 ? 40 : 32} />
           <span className="tile-name">{row.name}</span>
-          <span className="tile-meta num">Uploading {formatPercent(row.transferred, row.total)}</span>
+          <span className="tile-meta num">{row.done ? "Uploaded" : `Uploading ${formatPercent(row.transferred, row.total)}`}</span>
         </div>
       );
     }

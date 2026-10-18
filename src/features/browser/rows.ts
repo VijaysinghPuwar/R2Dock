@@ -28,6 +28,8 @@ export interface GhostRow {
   name: string;
   transferred: number;
   total: number;
+  /** Finished, waiting for the folder listing to refresh. */
+  done: boolean;
 }
 
 export type Row = FolderRow | FileRow | GhostRow;

@@ -162,8 +162,8 @@ export function FileTable({
                     </div>
                   )}
                   <div role="gridcell" className="cell col-size ghost-progress">
-                    <ProgressBar value={row.transferred} max={row.total} label={`Uploading ${formatPercent(row.transferred, row.total)}`} />
-                    <span className="small secondary num">Uploading {formatPercent(row.transferred, row.total)}</span>
+                    <ProgressBar value={row.done ? row.total : row.transferred} max={row.total} label={row.done ? "Uploaded" : `Uploading ${formatPercent(row.transferred, row.total)}`} />
+                    <span className="small secondary num">{row.done ? "Uploaded" : `Uploading ${formatPercent(row.transferred, row.total)}`}</span>
                   </div>
                   <div role="gridcell" className="cell col-modified" />
                 </div>

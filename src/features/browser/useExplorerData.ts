@@ -48,9 +48,12 @@ export function useExplorerData(connectionId: string, bucket: string, prefix: st
     return sortRows(filterRows(listed, term), sort);
   }, [bucketSearch, searched, listed, term, sort]);
 
-  // Uploads in progress into this folder that are not listed yet.
+  // Uploads into this folder that are not listed yet: in progress, or
+  // finished after the listing was loaded (until the refresh lands, so the
+  // row does not vanish and come back).
   const jobs = useTransferStore((s) => s.jobs);
   const order = useTransferStore((s) => s.order);
+  const listedAt = listing.dataUpdatedAt;
   const ghosts: GhostRow[] = useMemo(() => {
     if (bucketSearch || term) return [];
     const listedKeys = new Set(listed.map((r) => r.id));
@@ -58,11 +61,13 @@ export function useExplorerData(connectionId: string, bucket: string, prefix: st
     for (const id of order) {
       const j = jobs[id];
       if (!j || j.direction !== "upload" || j.connectionId !== connectionId || j.bucket !== bucket) continue;
-      if (isTerminal(j.state) || parentPrefix(j.key) !== prefix || listedKeys.has(j.key)) continue;
-      out.push({ kind: "ghost", id: `ghost:${j.id}`, key: j.key, name: baseName(j.key), transferred: j.transferredBytes, total: j.totalBytes });
+      if (parentPrefix(j.key) !== prefix || listedKeys.has(j.key)) continue;
+      const done = j.state === "completed" && j.finishedAt !== null && Date.parse(j.finishedAt) >= listedAt;
+      if (isTerminal(j.state) && !done) continue;
+      out.push({ kind: "ghost", id: `ghost:${j.id}`, key: j.key, name: baseName(j.key), transferred: j.transferredBytes, total: j.totalBytes, done });
     }
     return out;
-  }, [jobs, order, listed, connectionId, bucket, prefix, bucketSearch, term]);
+  }, [jobs, order, listed, listedAt, connectionId, bucket, prefix, bucketSearch, term]);
 
   const allRows: Row[] = useMemo(() => (ghosts.length ? [...rows, ...ghosts] : rows), [rows, ghosts]);
   const active = bucketSearch ? searchQuery : listing;
