@@ -160,6 +160,25 @@ describe("transfer subscription", () => {
     expect(spy.mock.calls.length).toBeLessThanOrEqual(5);
   });
 
+  it("tells once when an upload goes up uncompressed", async () => {
+    const { useToastStore } = await setup();
+    const job = makeJob({ id: "u1", name: "intro.wav", state: "compressing", compression: { kind: "pending", fraction: 0.5 } });
+    send({ type: "added", jobs: [job] });
+    const unchanged = {
+      ...job,
+      state: "running" as const,
+      compression: { kind: "unchanged" as const, reason: { kind: "plan" as const, reason: { reason: "alreadyCompressed" as const, kbps: 128 } } },
+    };
+    send({ type: "updated", job: unchanged });
+    send({ type: "updated", job: { ...unchanged, transferredBytes: 10 } });
+    vi.advanceTimersByTime(1000);
+    const messages = () => useToastStore.getState().toasts.map((t) => t.message).filter((m) => m.includes("intro.wav"));
+    expect(messages()).toEqual(["intro.wav can't be compressed: Already compressed (128 kbps). Uploading the original."]);
+    send({ type: "updated", job: { ...unchanged, transferredBytes: 20 } });
+    vi.advanceTimersByTime(1000);
+    expect(messages()).toHaveLength(1);
+  });
+
   it("Show on the upload toast switches to the transfer's account", async () => {
     const { client, qk, useToastStore, useNavStore } = await setup();
     client.setQueryData(qk.connections, [conn("conn-a", false), conn("conn-b", true)]);

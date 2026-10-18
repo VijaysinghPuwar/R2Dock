@@ -37,6 +37,9 @@ function skipText(reason: SkipReason): string {
       return `Already compressed (${reason.kbps} kbps)`;
     case "savingTooSmall":
       return `Would save only ${reason.percent}%`;
+    default:
+      // A reason added in the core before this list knows it.
+      return "Kept as is";
   }
 }
 
@@ -54,6 +57,8 @@ export function unchangedText(reason: Unchanged): string {
       return "Not enough disk space to compress";
     case "toolsMissing":
       return "Compression tools are not installed";
+    default:
+      return "Kept as is";
   }
 }
 

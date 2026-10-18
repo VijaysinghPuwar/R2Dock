@@ -675,6 +675,8 @@ Transfer row (`TransferRow`), 56 px tall:
 
 **Compression in rows**: while compressing, the status reads "Compressing 42%" (Pause stops the encode; Resume starts it again). A finished upload adds "Saved 330 MB (50%)", or "Not compressed: Already compressed (48 kbps)", "Not compressed: Would save only 6%", "Not compressed: Compression tools are not installed", "Not compressed: HDR video kept as is", "Not compressed: Already efficient (HEVC)", or "Compression failed; uploaded the original". The review box counts "12 audio files and 3 videos" and its switch reads "Compress audio and video before upload" when videos are included. Non-audio files show nothing about compression.
 
+**Not compressed toast**: when compression is on and a file goes up as the original, a neutral toast says so once per file while the upload continues: "intro.wav can't be compressed: Already compressed (128 kbps). Uploading the original." or "Couldn't compress intro.wav. Uploading the original." Files that reach this point within about a second share one toast: "3 files can't be compressed. Uploading the originals." Nothing is shown for files compression does not apply to (not audio or video, or video while video compression is off).
+
 ### Screen 6: File Preview and Details (`PreviewModal`, `DetailsPanel`)
 
 Two entry points: the details panel (7.5) for quick inspection, and a large preview modal opened with Space or double click.

@@ -11,6 +11,7 @@ import { useUiStore } from "../../app/uiStore";
 import { toast } from "../../components/toastStore";
 import { folderLabel, parentPrefix } from "../../lib/keys";
 import { plural } from "../../lib/format";
+import { createCompressionNotices } from "./compressionNotice";
 import { isMoving, isTerminal } from "./stats";
 import { useTransferStore } from "./transferStore";
 
@@ -33,6 +34,8 @@ const FLUSH_MS = 50;
 const batch = new Map<string, Direction>();
 /** Ids in `batch` that are still working, so the idle check is O(1) per event. */
 const moving = new Set<string>();
+/** Uploads that go up as the original although compression is on. */
+const compressionNotices = createCompressionNotices((message) => toast.neutral(message));
 
 /** How long completions are collected before cached views are refreshed. */
 const REFRESH_MS = 800;
@@ -100,6 +103,9 @@ function afterEvent(client: QueryClient, before: Record<string, JobSnapshot>, ev
   if (event.type === "snapshot") moving.clear();
   for (const job of touched) {
     const prev = before[job.id];
+    // A snapshot restores jobs from before; anything about them was already said.
+    if (event.type === "snapshot") compressionNotices.remember(job);
+    else compressionNotices.note(job);
     if (isMoving(job.state)) {
       if (!batch.has(job.id)) batch.set(job.id, job.direction);
       moving.add(job.id);
@@ -126,7 +132,10 @@ function afterEvent(client: QueryClient, before: Record<string, JobSnapshot>, ev
     });
   }
 
-  if (event.type === "removed") for (const id of event.ids) moving.delete(id);
+  if (event.type === "removed") {
+    for (const id of event.ids) moving.delete(id);
+    compressionNotices.forget(event.ids);
+  }
   if (batch.size === 0 || moving.size > 0) return; // still working
   const batchJobs: JobSnapshot[] = [];
   for (const id of batch.keys()) {
