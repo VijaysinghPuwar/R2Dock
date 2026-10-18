@@ -755,6 +755,16 @@ impl Inner {
 
     /// Record a final state, history, and journal cleanup.
     fn finish(&self, id: JobId, state: JobState, error: Option<AppError>) {
+        // Clean up before announcing the final state, so anyone who sees
+        // "completed" never finds the job's copy or journal entry still there.
+        if matches!(
+            state,
+            JobState::Completed | JobState::Cancelled | JobState::Skipped
+        ) {
+            self.journal.remove(id);
+            // The copy is no longer needed; a finished job keeps its result.
+            self.drop_compressed(id, state != JobState::Completed);
+        }
         self.set_state(id, state, error.clone());
         let entry = {
             let jobs = self.jobs.lock();
@@ -777,14 +787,6 @@ impl Inner {
                 duration_secs: duration,
             }
         };
-        if matches!(
-            state,
-            JobState::Completed | JobState::Cancelled | JobState::Skipped
-        ) {
-            self.journal.remove(id);
-            // The copy is no longer needed; a finished job keeps its result.
-            self.drop_compressed(id, state != JobState::Completed);
-        }
         let history = self.history.clone();
         tokio::task::spawn_blocking(move || history.append(&entry));
     }

@@ -24,6 +24,7 @@ Tested end to end on Windows 11 against a local S3 server, with stress runs of 3
 - Selecting a whole drive for upload explains why it was skipped; folders holding only hidden system files upload as empty folders.
 - The sidebar shows a connection as online or offline from finished transfers, not only after a connection test.
 - The transfer dock no longer shows an old speed and time left while a transfer waits to retry.
+- A finished upload's compressed copy and journal entry are removed before the job is shown as complete.
 
 ### Changed
 
