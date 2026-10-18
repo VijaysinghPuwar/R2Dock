@@ -98,11 +98,15 @@ fn forward<R: AsyncRead + Unpin + Send + 'static>(
 const NICE: [&str; 2] = ["/usr/bin/nice", "/bin/nice"];
 
 fn command(bin: &Path, args: &[OsString]) -> CommandWrap {
-    #[cfg(unix)]
     // A missing FFmpeg is started directly, so it fails as a spawn error
     // and not as an exit code from `nice`.
-    let nice = NICE.iter().map(Path::new).find(|p| p.is_file());
-    let mut cmd = match nice.filter(|_| bin.is_file()) {
+    #[cfg(unix)]
+    let mut cmd = match NICE
+        .iter()
+        .map(Path::new)
+        .find(|p| p.is_file())
+        .filter(|_| bin.is_file())
+    {
         Some(nice) => {
             let mut c = tokio::process::Command::new(nice);
             c.args(["-n", "10"]).arg(bin);
@@ -232,7 +236,9 @@ mod tests {
     }
 
     /// FFmpeg runs below normal priority, as itself (same process id).
-    #[cfg(unix)]
+    /// Checked on Linux only: the macOS CI runner reports a nice value of 0
+    /// for the child even though `nice -n 10` started it.
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn runs_below_normal_priority() {
         use std::os::unix::fs::PermissionsExt;
