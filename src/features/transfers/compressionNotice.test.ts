@@ -42,6 +42,19 @@ describe("compression notices", () => {
     expect(shown).toEqual(["Couldn't compress intro.wav. Uploading the original."]);
   });
 
+  it("says the file was skipped when the Skip the file setting stopped it", () => {
+    const { shown, notices } = setup();
+    const job = makeJob({ id: "a", name: "intro.wav", state: "compressing", compression: { kind: "failed", message: "x" } });
+    notices.note(job);
+    notices.note({ ...job, state: "failed" });
+    notices.note(makeJob({ id: "b", name: "b.wav", state: "failed", compression: { kind: "failed", message: "x" } }));
+    vi.advanceTimersByTime(NOTICE_BATCH_MS);
+    expect(shown).toEqual(["2 files couldn't be compressed, so they were skipped as set in Settings > Compression."]);
+    notices.note(makeJob({ id: "c", name: "c.wav", state: "failed", compression: { kind: "failed", message: "x" } }));
+    vi.advanceTimersByTime(NOTICE_BATCH_MS);
+    expect(shown[1]).toBe("Couldn't compress c.wav, so it was skipped as set in Settings > Compression.");
+  });
+
   it("shows one toast for a batch of files", () => {
     const { shown, notices } = setup();
     notices.note(makeJob({ id: "a", name: "a.wav", compression: alreadyCompressed }));

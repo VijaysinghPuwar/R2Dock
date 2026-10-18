@@ -8,9 +8,12 @@ import { unchangedText } from "./compressionText";
 export const NOTICE_BATCH_MS = 1000;
 
 interface Notice {
+  id: string;
   name: string;
   /** Why it was not compressed, or null when compression failed. */
   reason: string | null;
+  /** Compression failed and the "Skip the file" setting stopped the upload. */
+  stopped: boolean;
 }
 
 /** Results where compression did not apply at all, so there is nothing to tell. */
@@ -25,9 +28,11 @@ function noticeFor(job: JobSnapshot): Notice | null {
   if (job.direction !== "upload") return null;
   const view = job.compression;
   if (!view) return null;
-  if (view.kind === "failed") return { name: job.name, reason: null };
+  if (view.kind === "failed") {
+    return { id: job.id, name: job.name, reason: null, stopped: job.state === "failed" };
+  }
   if (view.kind === "unchanged" && !notApplicable(view.reason)) {
-    return { name: job.name, reason: unchangedText(view.reason) };
+    return { id: job.id, name: job.name, reason: unchangedText(view.reason), stopped: false };
   }
   return null;
 }
@@ -35,11 +40,16 @@ function noticeFor(job: JobSnapshot): Notice | null {
 function message(notices: Notice[]): string {
   const [only] = notices;
   if (notices.length === 1 && only) {
+    if (only.stopped) return `Couldn't compress ${only.name}, so it was skipped as set in Settings > Compression.`;
     return only.reason === null
       ? `Couldn't compress ${only.name}. Uploading the original.`
       : `${only.name} can't be compressed: ${only.reason}. Uploading the original.`;
   }
-  return `${notices.length} files can't be compressed. Uploading the originals.`;
+  const stopped = notices.filter((n) => n.stopped).length;
+  const uploading = notices.length - stopped;
+  if (stopped === 0) return `${notices.length} files can't be compressed. Uploading the originals.`;
+  if (uploading === 0) return `${stopped} files couldn't be compressed, so they were skipped as set in Settings > Compression.`;
+  return `${notices.length} files can't be compressed. Uploading ${uploading} originals; ${stopped} skipped as set in Settings > Compression.`;
 }
 
 export interface CompressionNotices {
@@ -65,7 +75,13 @@ export function createCompressionNotices(show: (message: string) => void): Compr
 
   return {
     note: (job) => {
-      if (reported.has(job.id)) return;
+      if (reported.has(job.id)) {
+        // The job may stop (Skip the file) after compression failed but before
+        // the notice is shown; keep the waiting notice accurate.
+        const waiting = pending.find((n) => n.id === job.id);
+        if (waiting && waiting.reason === null) waiting.stopped = job.state === "failed";
+        return;
+      }
       const notice = noticeFor(job);
       if (!notice) return;
       reported.add(job.id);
