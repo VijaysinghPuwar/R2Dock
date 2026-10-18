@@ -329,6 +329,15 @@ pub struct SettingsView {
     pub activity_log_problem: Option<String>,
 }
 
+/// Rows exported and whether the queued activity rows reached disk in time.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ActivityExportResult {
+    pub rows: u32,
+    pub complete: bool,
+}
+
 /// Which rows to include in an activity export.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

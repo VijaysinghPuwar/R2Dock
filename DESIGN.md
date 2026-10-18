@@ -752,6 +752,7 @@ Layout: left sub-navigation (200 px) and content area (max 720 px). Sections and
 - Request timeout, retries, and part size are shown read-only by default with an "Edit advanced settings" unlock.
 - Log level: Standard (default) or Detailed. Helper: "Logs never contain your secret keys."
 - Open log folder.
+- Activity export reports the row count. If queued rows did not reach disk in time, a warning adds: "The export may miss the most recent rows because the activity log is still being written."
 - Reset all settings.
 
 **About**

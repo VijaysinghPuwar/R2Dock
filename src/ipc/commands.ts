@@ -14,6 +14,7 @@ import type { DeletePreview } from "./bindings/DeletePreview";
 import type { DeleteResult } from "./bindings/DeleteResult";
 import type { DownloadStarted } from "./bindings/DownloadStarted";
 import type { ExportRange } from "./bindings/ExportRange";
+import type { ActivityExportResult } from "./bindings/ActivityExportResult";
 import type { HistoryEntry } from "./bindings/HistoryEntry";
 import type { InstallProgress } from "./bindings/InstallProgress";
 import type { PreviewSample } from "./bindings/PreviewSample";
@@ -149,7 +150,7 @@ export const activityResetDir = () => invoke<SettingsView>("activity_reset_dir")
 /** Copies the full folder path; Rust writes it to the clipboard. */
 export const logCopyPath = (kind: LogKind) => invoke<void>("log_copy_path", { kind });
 /** Asks for a destination with the system save dialog. Returns the row count, or null if cancelled. */
-export const activityExportCsv = (range: ExportRange) => invoke<number | null>("activity_export_csv", { range });
+export const activityExportCsv = (range: ExportRange) => invoke<ActivityExportResult | null>("activity_export_csv", { range });
 /** Record a problem seen by the interface in the activity log (best effort, never throws). */
 export const activityNote = (kind: string, message: string) =>
   invoke<void>("activity_note", { kind, message }).catch(() => undefined);

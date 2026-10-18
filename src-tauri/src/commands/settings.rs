@@ -7,9 +7,9 @@ use tauri::State;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use super::CmdResult;
-use crate::activity::export;
+use crate::activity::{ActivityLog, export};
 use crate::dialogs;
-use crate::dto::{ExportRange, LogKind, SettingsView};
+use crate::dto::{ActivityExportResult, ExportRange, LogKind, SettingsView};
 use crate::state::AppState;
 
 pub fn view(state: &AppState) -> SettingsView {
@@ -248,15 +248,30 @@ fn is_daily_file(dest: &Path, activity_dir: &Path) -> bool {
     same_dir && daily_name
 }
 
+fn export_activity(
+    log: &ActivityLog,
+    dir: &Path,
+    since: Option<DateTime<Utc>>,
+    dest: &Path,
+    timeout: std::time::Duration,
+) -> std::io::Result<ActivityExportResult> {
+    // Rows recorded before the export are written first (bounded wait).
+    let complete = log.flush(timeout);
+    export::export_csv(dir, since, dest).map(|rows| ActivityExportResult {
+        rows: u32::try_from(rows).unwrap_or(u32::MAX),
+        complete,
+    })
+}
+
 /// Merge the activity files into one CSV file. The destination comes from
-/// the Rust save dialog, never from the webview. Returns the number of rows,
-/// or `None` when the user cancels.
+/// the Rust save dialog, never from the webview. Returns the row count and
+/// flush status, or `None` when the user cancels.
 #[tauri::command]
 pub async fn activity_export_csv(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     range: ExportRange,
-) -> CmdResult<Option<u32>> {
+) -> CmdResult<Option<ActivityExportResult>> {
     let now = Local::now();
     let file_name = format!("r2dock-activity-{}.csv", now.format("%Y-%m-%d"));
     let Some(dest) = dialogs::save_csv(&app, &file_name).await? else {
@@ -275,19 +290,14 @@ pub async fn activity_export_csv(
         .field("range", format!("{range:?}"));
     let log = state.activity.clone();
     let result = tokio::task::spawn_blocking(move || {
-        // Rows recorded before the export are written first (bounded wait).
-        let flushed = log.flush(EXPORT_FLUSH);
-        export::export_csv(&dir, since, &dest).map(|rows| (rows, flushed))
+        export_activity(&log, &dir, since, &dest, EXPORT_FLUSH)
     })
     .await
     .map_err(|_| AppError::internal("A background task stopped unexpectedly."))
     .and_then(|r| r.map_err(|e| r2dock_core::app_error::io_error(&e, "export the activity log")));
-    if let Ok((_, flushed)) = &result {
-        act.set("complete", *flushed);
-    }
-    let result = result.map(|(rows, _)| u32::try_from(rows).unwrap_or(u32::MAX));
-    if let Ok(rows) = &result {
-        act.set("rows", *rows);
+    if let Ok(exported) = &result {
+        act.set("complete", exported.complete);
+        act.set("rows", exported.rows);
     }
     act.end(&result);
     result.map(Some)
@@ -344,6 +354,34 @@ pub async fn history_clear(state: State<'_, AppState>) -> CmdResult<()> {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Timelike};
+
+    #[test]
+    fn export_keeps_existing_rows_and_reports_an_unfinished_flush() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = ActivityLog::start(dir.path().to_path_buf(), true, false);
+        log.event("test_action", serde_json::Map::new());
+        let dest = dir.path().join("export.csv");
+
+        let result = export_activity(&log, dir.path(), None, &dest, EXPORT_FLUSH).unwrap();
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            serde_json::json!({ "rows": 1, "complete": true })
+        );
+
+        // A stopped writer cannot acknowledge another flush. This exercises
+        // the same false result as a timeout, without relying on disk timing.
+        assert!(log.shutdown(EXPORT_FLUSH));
+        let result = export_activity(&log, dir.path(), None, &dest, EXPORT_FLUSH).unwrap();
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            serde_json::json!({ "rows": 1, "complete": false })
+        );
+        assert!(
+            std::fs::read_to_string(dest)
+                .unwrap()
+                .contains(",test_action,")
+        );
+    }
 
     #[test]
     fn export_ranges() {
