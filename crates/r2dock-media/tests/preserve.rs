@@ -725,6 +725,34 @@ async fn speech_that_only_matches_in_the_middle_stays_stereo() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn lossless_audio_with_a_language_tag_still_compresses() {
+    let Some((ff, _)) = tools().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("tagged.m4a");
+    // ALAC with language=eng becomes MP3, which has no per-track language.
+    make(
+        &ff.bin,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "anoisesrc=r=44100:d=120:a=0.3",
+            "-ac",
+            "2",
+            "-c:a",
+            "alac",
+            "-metadata:s:a:0",
+            "language=eng",
+            s(&input),
+        ],
+    );
+    let Prepared::Compressed(c) = run(&ff, &input, dir.path()).await else {
+        panic!("expected compression");
+    };
+    assert_eq!(inventory(&ff, &c.output).await.audio().count(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn quiet_opposite_channels_are_not_identical() {
     let Some((ff, _)) = tools().await else { return };
     let dir = tempfile::tempdir().unwrap();

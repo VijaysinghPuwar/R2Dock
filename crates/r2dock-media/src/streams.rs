@@ -44,7 +44,9 @@ pub fn video_tracks(probe: &VideoProbe) -> usize {
 pub struct ExpectedAudio {
     /// Channel count, when known.
     pub channels: Option<u32>,
-    pub language: String,
+    /// Language to keep. `None` when the output format has no per-track
+    /// language (MP3, FLAC) and there is only one track to tell apart.
+    pub language: Option<String>,
 }
 
 impl ExpectedAudio {
@@ -52,7 +54,7 @@ impl ExpectedAudio {
     pub fn from_source(source: &StreamInfo, channels: Option<u32>) -> Self {
         Self {
             channels,
-            language: source.language.clone(),
+            language: Some(source.language.clone()),
         }
     }
 }
@@ -94,7 +96,11 @@ pub fn check(output: &VideoProbe, expected: &Expected) -> Result<(), VerifyError
                 got: got.channels,
             });
         }
-        if !same_language(&got.language, &want.language) {
+        if want
+            .language
+            .as_deref()
+            .is_some_and(|lang| !same_language(&got.language, lang))
+        {
             return Err(VerifyError::StreamsChanged);
         }
     }
@@ -149,7 +155,7 @@ mod tests {
                 .iter()
                 .map(|(channels, language)| ExpectedAudio {
                     channels: *channels,
-                    language: (*language).to_string(),
+                    language: Some((*language).to_string()),
                 })
                 .collect(),
             subtitles,

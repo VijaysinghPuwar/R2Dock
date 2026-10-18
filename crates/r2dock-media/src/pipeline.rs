@@ -243,7 +243,8 @@ pub async fn prepare(
         .encode(input, &output, &target, duration, cancel, on_fraction)
         .await?;
     // The output must hold exactly what was promised: one audio track with
-    // the planned channels and the source's language. A copy that lost
+    // the planned channels. MP3 and FLAC have no per-track language, so with
+    // a single track the language tag is not compared. A copy that lost
     // something is not a failure: the original is uploaded instead.
     let mut kept = result.audio_tracks == 1 && result.channels.is_none_or(|c| c == target.channels);
     if kept && let Some(ffprobe) = &ff.ffprobe {
@@ -251,7 +252,7 @@ pub async fn prepare(
             video: 0,
             audio: vec![ExpectedAudio {
                 channels: Some(u32::from(target.channels)),
-                language: source_audio.map(|a| a.language).unwrap_or_default(),
+                language: None,
             }],
             subtitles: 0,
         };
