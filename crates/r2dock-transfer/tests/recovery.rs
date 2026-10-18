@@ -217,7 +217,16 @@ async fn finalized_download_completes_after_restart() {
         let root = dest.path().canonicalize().unwrap();
         let final_path = root.join("same.txt");
         if placed != "same.txt" {
+            // The user's file was there before the download. Windows has no
+            // file identity here, so only size and time tell the two apart,
+            // and two writes in a row can share a timestamp.
             std::fs::write(&final_path, b"USER").unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&final_path)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600))
+                .unwrap();
         }
         let ours = root.join(placed);
         std::fs::write(&ours, b"NEW!").unwrap();
