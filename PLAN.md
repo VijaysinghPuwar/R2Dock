@@ -582,6 +582,7 @@ form-action 'none';
 
 - Images and audio are served through a custom URI scheme (`r2dock-media://<opaque-token>`) handled in Rust, which fetches from R2 with Range support and streams to the webview. The token maps to (connection, bucket, key) in memory and expires. **No presigned URL or credential reaches the webview** (a lesson from S3 Manager). **[Verify]** that WKWebView, WebView2, and WebKitGTK handle Range requests for audio through Tauri's asynchronous URI scheme protocol.
 - Size caps: images 25 MiB, text 1 MiB, thumbnails 10 MiB source size.
+- Response bounds: one scheme request returns at most 64 MiB whole or one 2 MiB range. The body is read as a stream with a hard cap equal to the length HEAD reported, so a reply that is longer (the object was replaced after HEAD, or the server ignored the range) is cut off and refused with 502, never collected. The reply must carry the ETag HEAD saw, and a ranged reply must cover exactly the requested bytes. At most 6 R2 previews are fetched at once and they share a 128 MiB byte budget. Requests the webview abandons are not cancelled early; they finish within these bounds.
 - Previewed content gets `Content-Type` from a safe allowlist; everything else is served as `application/octet-stream` and not rendered.
 
 ### 9.6 Local file safety
@@ -625,6 +626,7 @@ Downloads:
 | R2 secret | Left in the credential store after its connection is removed or replaced | Opaque cleanup records saved with the config change, retried at startup and after each change | An entry stays until the store accepts the delete; the user can see the pending count in Settings > Security |
 | R2 secret | Leaks through logs, crash reports, errors | Redaction layer, `secrecy`, error DTOs without raw responses, no crash upload | Low |
 | R2 secret | Exposed to webview JavaScript | Never sent to frontend after entry; strict CSP; no remote scripts | XSS during form entry could read the typed value. Mitigated by CSP and no remote content |
+| Preview scheme | A hostile or changed object exhausts memory through a preview response | Streaming reads capped at the HEAD length, ETag and Content-Range checks, 6 concurrent fetches sharing a 128 MiB budget | Bytes already handed to the webview stay in its memory until it drops them |
 | Frontend | XSS from object names or previewed content | Names rendered as text; no HTML rendering of objects; CSP; SVG via img only | Low |
 | IPC | Compromised webview calls commands to read local files or delete data | Command allowlist; local paths only via Rust pickers and opaque ids; delete confirmation tokens; input validation | A compromised webview could still delete one object per call within confirmation rules |
 | R2 traffic | Interception | HTTPS with system or rustls roots; no certificate override option | Corporate TLS interception requires trusting a custom root at OS level |
