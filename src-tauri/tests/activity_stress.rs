@@ -140,7 +140,7 @@ fn concurrent_writers(threads: usize, per_thread: usize) {
         total,
         "every event is written exactly once or counted as dropped"
     );
-    if threads * per_thread <= 8_000 {
+    if threads * per_thread <= 160_000 {
         assert_eq!(dropped, 0, "a normal burst fits in the queue");
     }
     let mut errors = 0;

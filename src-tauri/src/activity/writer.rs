@@ -28,9 +28,9 @@ use super::FILE_PREFIX;
 use super::csv::{self, Record};
 
 /// Most rows waiting to be written.
-pub const MAX_QUEUED_ROWS: usize = 20_000;
+pub const MAX_QUEUED_ROWS: usize = 200_000;
 /// Most bytes of rows waiting to be written.
-pub const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_QUEUED_BYTES: usize = 64 * 1024 * 1024;
 /// Most rows written per batch.
 const BATCH: usize = 1_000;
 
