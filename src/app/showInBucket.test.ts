@@ -92,10 +92,31 @@ describe("showInBucket", () => {
     });
     const first = showInBucket(client, target);
     await vi.waitFor(() => expect(connectionSetActive).toHaveBeenCalledTimes(1));
-    // The second request is for the active account, so it finishes first.
+    // The second request opens another folder in the same account.
     const second = showInBucket(client, { connectionId: "conn-a", bucket: "media-library", prefix: "later/" });
     release();
     await Promise.all([first, second]);
     expect(useNavStore.getState().loc.prefix).toBe("later/");
+  });
+
+  it("keeps the latest folder's account active when an older switch finishes late", async () => {
+    const client = setup();
+    let release: () => void = () => undefined;
+    connectionSetActive.mockImplementationOnce((id: string) => new Promise<void>((resolve) => {
+      release = () => {
+        saved = saved.map((c) => ({ ...c, active: c.id === id }));
+        resolve();
+      };
+    }));
+    const first = showInBucket(client, target);
+    await vi.waitFor(() => expect(connectionSetActive).toHaveBeenCalledTimes(1));
+    const second = showInBucket(client, { connectionId: "conn-b", bucket: "media-library", prefix: "latest-b/" });
+    release();
+    await Promise.all([first, second]);
+
+    expect(useNavStore.getState().loc.prefix).toBe("latest-b/");
+    expect(saved.find((c) => c.active)?.id).toBe("conn-b");
+    expect(client.getQueryData<ConnectionSummary[]>(qk.connections)?.find((c) => c.active)?.id).toBe("conn-b");
+    expect(connectionSetActive.mock.calls.map(([id]) => id)).toEqual(["conn-a", "conn-b"]);
   });
 });

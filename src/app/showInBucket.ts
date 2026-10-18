@@ -15,6 +15,7 @@ export interface BucketTarget {
 
 /** Numbers each request, so a slow account switch cannot navigate after a newer request. */
 let latest = 0;
+let pending = Promise.resolve();
 
 async function currentConnections(client: QueryClient): Promise<ConnectionSummary[]> {
   try {
@@ -30,8 +31,17 @@ async function currentConnections(client: QueryClient): Promise<ConnectionSummar
  * account first when needed, because two accounts can have buckets with the
  * same name. Never shows another account's folder.
  */
-export async function showInBucket(client: QueryClient, target: BucketTarget): Promise<void> {
+export function showInBucket(client: QueryClient, target: BucketTarget): Promise<void> {
   const request = ++latest;
+  // A switch already in flight must settle before the next request checks
+  // the active account, even when that next request appears not to need one.
+  const next = pending.then(() => showLatestInBucket(client, target, request));
+  pending = next.catch(() => undefined);
+  return next;
+}
+
+async function showLatestInBucket(client: QueryClient, target: BucketTarget, request: number): Promise<void> {
+  if (request !== latest) return;
   const connections = await currentConnections(client);
   if (request !== latest) return;
   const owner = connections.find((c) => c.id === target.connectionId);
