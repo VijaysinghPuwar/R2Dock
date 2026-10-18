@@ -10,15 +10,45 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   # The tag being released: the pushed tag, or the one given by hand.
   TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
+  # Resolve the tag to one commit and check it matches every manifest, so all
+  # jobs build and publish exactly the same tested revision.
+  verify:
+    name: Verify tag and versions
+    runs-on: ubuntu-22.04
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+      - name: Resolve the tag and check versions
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Tag $TAG is not vX.Y.Z"; exit 1; }
+          v="${TAG#v}"
+          sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          [ "$sha" = "$(git rev-parse HEAD)" ] || { echo "Checkout does not match tag"; exit 1; }
+          cargo_v="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          npm_v="$(node -p 'require("./package.json").version')"
+          tauri_v="$(node -p 'require("./src-tauri/tauri.conf.json").version')"
+          echo "tag=$v cargo=$cargo_v npm=$npm_v tauri=$tauri_v sha=$sha"
+          [ "$cargo_v" = "$v" ] && [ "$npm_v" = "$v" ] && [ "$tauri_v" = "$v" ] || { echo "Version mismatch"; exit 1; }
+          grep -q "^## \[$v\]" CHANGELOG.md || { echo "CHANGELOG has no entry for $v"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build (${{ matrix.name }})
+    needs: verify
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ needs.verify.outputs.sha }}
 
       - name: Install Linux system libraries
         if: runner.os == 'Linux'
@@ -101,17 +131,27 @@ jobs:
 
   publish:
     name: Publish release
-    needs: build
+    needs: [verify, build]
     if: startsWith(inputs.tag || github.ref_name, 'v')
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ needs.verify.outputs.sha }}
       - uses: actions/download-artifact@v4
         with:
           path: release-files
           merge-multiple: true
+      - name: Check the installer set
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${TAG#v}"
+          expected="R2Dock-$v-Linux.AppImage R2Dock-$v-Linux.deb R2Dock-$v-Windows-Setup.exe R2Dock-$v-macOS-Apple-Silicon.dmg R2Dock-$v-macOS-Intel.dmg"
+          actual="$(cd release-files && find . -type f | sed 's#^\./##' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+          [ "$actual" = "$expected" ] || { echo "Unexpected files: $actual"; exit 1; }
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -126,7 +166,7 @@ jobs:
             echo "| Mac with Apple Silicon (M1, M2, M3, M4, M5) | \`R2Dock-$v-macOS-Apple-Silicon.dmg\` |"
             echo "| Mac with an Intel processor | \`R2Dock-$v-macOS-Intel.dmg\` |"
             echo "| Windows 10 or 11 | \`R2Dock-$v-Windows-Setup.exe\` |"
-            echo "| Linux (any distribution) | \`R2Dock-$v-Linux.AppImage\` |"
+            echo "| Linux x64 with WebKitGTK 4.1 (most current distributions) | \`R2Dock-$v-Linux.AppImage\` |"
             echo "| Linux (Debian, Ubuntu) | \`R2Dock-$v-Linux.deb\` |"
             echo
             echo "Not sure which Mac you have? Apple menu > About This Mac: \"Chip: Apple M...\" means Apple Silicon; \"Processor: Intel\" means Intel."
