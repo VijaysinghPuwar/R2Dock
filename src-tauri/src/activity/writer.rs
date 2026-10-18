@@ -16,7 +16,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError};
+use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -55,9 +55,11 @@ struct Health {
 }
 
 pub struct Writer {
-    tx: Option<SyncSender<Msg>>,
+    tx: Option<Sender<Msg>>,
     health: Arc<Health>,
     queued_bytes: Arc<AtomicUsize>,
+    queued_rows: Arc<AtomicUsize>,
+    max_rows: usize,
     max_bytes: usize,
     handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -73,12 +75,19 @@ impl Writer {
         max_rows: usize,
         max_bytes: usize,
     ) -> Self {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Msg>(max_rows);
+        // Unbounded channel with counted limits: a bounded std channel
+        // allocates every slot up front, which is memory an idle log never
+        // needs.
+        let (tx, rx) = std::sync::mpsc::channel::<Msg>();
         let health = Arc::new(Health::default());
         let queued_bytes = Arc::new(AtomicUsize::new(0));
+        let queued_rows = Arc::new(AtomicUsize::new(0));
         let spawned = {
             let health = health.clone();
-            let queued = queued_bytes.clone();
+            let queued = Queued {
+                bytes: queued_bytes.clone(),
+                rows: queued_rows.clone(),
+            };
             std::thread::Builder::new()
                 .name("r2dock-activity".into())
                 .spawn(move || run(&rx, &dir, &session, &health, &queued))
@@ -95,6 +104,8 @@ impl Writer {
             tx,
             health,
             queued_bytes,
+            queued_rows,
+            max_rows,
             max_bytes,
             handle: Mutex::new(handle),
         }
@@ -105,13 +116,15 @@ impl Writer {
     pub fn send(&self, date: String, line: String) {
         let len = line.len();
         let fits = self.queued_bytes.fetch_add(len, Ordering::AcqRel) + len <= self.max_bytes;
+        let fits = self.queued_rows.fetch_add(1, Ordering::AcqRel) < self.max_rows && fits;
         let sent = fits
             && self
                 .tx
                 .as_ref()
-                .is_some_and(|tx| tx.try_send(Msg::Row { date, line }).is_ok());
+                .is_some_and(|tx| tx.send(Msg::Row { date, line }).is_ok());
         if !sent {
             self.queued_bytes.fetch_sub(len, Ordering::AcqRel);
+            self.queued_rows.fetch_sub(1, Ordering::AcqRel);
             self.health.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -124,16 +137,8 @@ impl Writer {
         };
         let deadline = Instant::now() + timeout;
         let (ack, done) = std::sync::mpsc::channel();
-        let mut msg = Msg::Flush(ack);
-        loop {
-            match tx.try_send(msg) {
-                Ok(()) => break,
-                Err(TrySendError::Full(m)) if Instant::now() < deadline => {
-                    msg = m;
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Err(_) => return false,
-            }
+        if tx.send(Msg::Flush(ack)).is_err() {
+            return false;
         }
         done.recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .is_ok()
@@ -145,7 +150,7 @@ impl Writer {
         let deadline = Instant::now() + timeout;
         let flushed = self.flush(timeout);
         if let Some(tx) = &self.tx {
-            let _ = tx.try_send(Msg::Stop);
+            let _ = tx.send(Msg::Stop);
         }
         if let Some(handle) = self.handle.lock().take() {
             while !handle.is_finished() && Instant::now() < deadline {
@@ -202,14 +207,14 @@ fn rows(n: u64) -> &'static str {
     if n == 1 { "row" } else { "rows" }
 }
 
+/// Bytes and rows waiting in the channel.
+struct Queued {
+    bytes: Arc<AtomicUsize>,
+    rows: Arc<AtomicUsize>,
+}
+
 /// The writer thread: take everything queued, write it, acknowledge flushes.
-fn run(
-    rx: &Receiver<Msg>,
-    dir: &RwLock<PathBuf>,
-    session: &str,
-    health: &Health,
-    queued: &AtomicUsize,
-) {
+fn run(rx: &Receiver<Msg>, dir: &RwLock<PathBuf>, session: &str, health: &Health, queued: &Queued) {
     while let Ok(first) = rx.recv() {
         let mut batch: Vec<(String, String)> = Vec::new();
         let mut acks = Vec::new();
@@ -218,7 +223,8 @@ fn run(
         while let Some(msg) = next.take() {
             match msg {
                 Msg::Row { date, line } => {
-                    queued.fetch_sub(line.len(), Ordering::AcqRel);
+                    queued.bytes.fetch_sub(line.len(), Ordering::AcqRel);
+                    queued.rows.fetch_sub(1, Ordering::AcqRel);
                     batch.push((date, line));
                 }
                 Msg::Flush(ack) => acks.push(ack),
