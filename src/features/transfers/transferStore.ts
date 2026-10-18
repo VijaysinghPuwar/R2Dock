@@ -15,64 +15,103 @@ export interface TransferState {
 
 export const INITIAL_TRANSFER_STATE: TransferState = { jobs: {}, order: [], seen: false, authFailed: null };
 
-function upsert(state: TransferState, list: JobSnapshot[], replace: boolean): TransferState {
-  const jobs: Record<string, JobSnapshot> = replace ? {} : { ...state.jobs };
-  const order = replace ? [] : [...state.order];
-  for (const job of list) {
-    if (!(job.id in jobs)) order.push(job.id);
-    jobs[job.id] = job;
-  }
-  return { ...state, jobs, order, seen: state.seen || order.length > 0 };
-}
-
 /** Pure reducer for transfer events. */
 export function reduceTransfers(state: TransferState, event: TransferEvent): TransferState {
-  switch (event.type) {
-    case "snapshot":
-      return upsert(state, event.jobs, true);
-    case "added":
-      return upsert(state, event.jobs, false);
-    case "updated":
-      return upsert(state, [event.job], false);
-    case "progress": {
-      let changed = false;
-      const jobs = { ...state.jobs };
-      for (const u of event.updates) {
-        const job = jobs[u.id];
-        if (!job) continue;
+  return reduceTransferBatch(state, [event]);
+}
+
+/**
+ * Apply several events with at most one copy of the job map and order. A big
+ * queue sends thousands of events, and copying every job for each one froze
+ * the window, so the subscription applies them in batches.
+ */
+export function reduceTransferBatch(state: TransferState, events: TransferEvent[]): TransferState {
+  let { jobs, order, authFailed } = state;
+  let ownJobs = false;
+  let ownOrder = false;
+  let changed = false;
+  const writableJobs = () => {
+    if (!ownJobs) {
+      jobs = { ...jobs };
+      ownJobs = true;
+    }
+    return jobs;
+  };
+  const writableOrder = () => {
+    if (!ownOrder) {
+      order = [...order];
+      ownOrder = true;
+    }
+    return order;
+  };
+  const put = (list: JobSnapshot[]) => {
+    for (const job of list) {
+      if (!(job.id in jobs)) writableOrder().push(job.id);
+      writableJobs()[job.id] = job;
+    }
+  };
+
+  for (const event of events) {
+    switch (event.type) {
+      case "snapshot":
+        jobs = {};
+        order = [];
+        ownJobs = true;
+        ownOrder = true;
+        put(event.jobs);
         changed = true;
-        jobs[u.id] = {
-          ...job,
-          transferredBytes: u.transferredBytes,
-          speedBps: u.speedBps,
-          etaSecs: u.etaSecs,
-          partsDone: u.partsDone,
-        };
+        break;
+      case "added":
+        put(event.jobs);
+        changed = true;
+        break;
+      case "updated":
+        put([event.job]);
+        changed = true;
+        break;
+      case "progress":
+        for (const u of event.updates) {
+          const job = jobs[u.id];
+          if (!job) continue;
+          changed = true;
+          writableJobs()[u.id] = {
+            ...job,
+            transferredBytes: u.transferredBytes,
+            speedBps: u.speedBps,
+            etaSecs: u.etaSecs,
+            partsDone: u.partsDone,
+          };
+        }
+        break;
+      case "removed": {
+        const drop = new Set(event.ids);
+        const writable = writableJobs();
+        for (const id of event.ids) delete writable[id];
+        order = order.filter((id) => !drop.has(id));
+        ownOrder = true;
+        changed = true;
+        break;
       }
-      return changed ? { ...state, jobs } : state;
+      case "authFailed":
+        authFailed = { connectionId: event.connectionId, count: (authFailed?.count ?? 0) + 1 };
+        changed = true;
+        break;
     }
-    case "removed": {
-      const drop = new Set(event.ids);
-      const jobs = { ...state.jobs };
-      for (const id of event.ids) delete jobs[id];
-      return { ...state, jobs, order: state.order.filter((id) => !drop.has(id)) };
-    }
-    case "authFailed":
-      return {
-        ...state,
-        authFailed: { connectionId: event.connectionId, count: (state.authFailed?.count ?? 0) + 1 },
-      };
   }
+  if (!changed) return state;
+  return { ...state, jobs, order, authFailed, seen: state.seen || order.length > 0 };
 }
 
 interface TransferStore extends TransferState {
   apply: (event: TransferEvent) => void;
+  applyMany: (events: TransferEvent[]) => void;
   reset: () => void;
 }
 
 export const useTransferStore = create<TransferStore>((set) => ({
   ...INITIAL_TRANSFER_STATE,
   apply: (event) => set((s) => reduceTransfers(s, event)),
+  applyMany: (events) => set((s) => reduceTransferBatch(s, events)),
   reset: () => set(INITIAL_TRANSFER_STATE),
 }));
 

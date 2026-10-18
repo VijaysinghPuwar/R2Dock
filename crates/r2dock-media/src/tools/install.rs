@@ -7,6 +7,7 @@
 //! ffmpeg-9.0.2/ffprobe[.exe]
 //! ffmpeg-9.0.2/installed.json   sizes, modification times, and SHA-256
 //! .staging-*/                   work in progress, deleted on any failure
+//! .old-*/                       a replaced install not yet deleted
 //! ```
 //!
 //! Every download is hashed while it is written and checked against the
@@ -130,6 +131,9 @@ pub struct BinaryRecord {
 }
 
 const RECORD: &str = "installed.json";
+
+/// Prefix of an older install moved aside while a new one goes in.
+const OLD_PREFIX: &str = ".old-";
 
 fn exe(name: &str) -> String {
     if cfg!(windows) {
@@ -269,6 +273,7 @@ pub async fn install<F: Fetch>(
     mut on_progress: impl FnMut(u64, u64) + Send,
 ) -> Result<Tools, ToolsError> {
     std::fs::create_dir_all(root)?;
+    sweep_old(root);
     // Deleted automatically if anything below fails or is cancelled.
     let staging = tempfile::Builder::new()
         .prefix(".staging-")
@@ -305,13 +310,69 @@ pub async fn install<F: Fetch>(
     let json = serde_json::to_vec_pretty(&installed).map_err(io::Error::other)?;
     std::fs::write(staging.path().join(RECORD), json)?;
 
-    let dest = install_dir(root);
-    if dest.exists() {
-        std::fs::remove_dir_all(&dest)?;
-    }
-    let staged = staging.keep();
-    std::fs::rename(&staged, &dest)?;
+    swap_in(staging, &install_dir(root), root).await?;
     check_installed(root, Some(pkg))
+}
+
+/// Delete older installs left aside by an earlier replace. Best effort.
+fn sweep_old(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with(OLD_PREFIX) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// Tries for a rename; a virus scanner can hold a new file for a moment.
+const RENAME_TRIES: u32 = 5;
+
+async fn rename_retry(from: &Path, to: &Path) -> io::Result<()> {
+    let mut tries = 1;
+    loop {
+        match std::fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) if tries >= RENAME_TRIES => return Err(e),
+            Err(_) => {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+    }
+}
+
+/// Move the finished folder into place. An older install is moved aside
+/// first and only deleted once the new one is in; if the new one cannot be
+/// moved in, the old one is put back and the staging folder is deleted.
+async fn swap_in(staging: tempfile::TempDir, dest: &Path, root: &Path) -> Result<(), ToolsError> {
+    let old = if dest.exists() {
+        let aside = tempfile::Builder::new()
+            .prefix(OLD_PREFIX)
+            .tempdir_in(root)?
+            .keep();
+        // The empty placeholder only reserved a unique name.
+        std::fs::remove_dir(&aside)?;
+        rename_retry(dest, &aside).await?;
+        Some(aside)
+    } else {
+        None
+    };
+    if let Err(e) = rename_retry(staging.path(), dest).await {
+        if let Some(aside) = old {
+            let _ = std::fs::rename(&aside, dest);
+        }
+        return Err(e.into());
+    }
+    // Moved: nothing is left for the guard to delete.
+    let _ = staging.keep();
+    if let Some(aside) = old {
+        // A program still running from the old folder keeps it; `remove`
+        // and the next install clean it up.
+        let _ = std::fs::remove_dir_all(aside);
+    }
+    Ok(())
 }
 
 /// The installed tools, after checking nothing was replaced. Blocking when
@@ -350,18 +411,26 @@ pub fn check_installed(root: &Path, pkg: Option<&Package>) -> Result<Tools, Tool
     })
 }
 
-/// Remove the installed tools and any unfinished install.
+/// Remove the installed tools and any unfinished install. Removes all it
+/// can before reporting the first failure (a running FFmpeg on Windows).
 pub fn remove(root: &Path) -> Result<(), ToolsError> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Ok(());
     };
+    let mut first_error = None;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with("ffmpeg-") || name.starts_with(".staging-") {
-            std::fs::remove_dir_all(entry.path())?;
+        if name.starts_with("ffmpeg-")
+            || name.starts_with(".staging-")
+            || name.starts_with(OLD_PREFIX)
+        {
+            // Keep going, so one locked folder does not stop the rest.
+            if let Err(e) = std::fs::remove_dir_all(entry.path()) {
+                first_error.get_or_insert(e);
+            }
         }
     }
-    Ok(())
+    first_error.map_or(Ok(()), |e| Err(e.into()))
 }
 
 #[cfg(test)]

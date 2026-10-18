@@ -14,8 +14,8 @@ export function InterruptedBanner({ onReview }: { onReview?: () => void }) {
   const text = useMemo(
     () =>
       ids.length === 1
-        ? "1 transfer was interrupted when R2Dock closed. Large uploads can continue where they stopped."
-        : `${ids.length.toLocaleString("en-US")} transfers were interrupted when R2Dock closed. Large uploads can continue where they stopped.`,
+        ? "1 transfer was interrupted when R2Dock closed. Downloads and large uploads continue where they stopped."
+        : `${ids.length.toLocaleString("en-US")} transfers were interrupted when R2Dock closed. Downloads and large uploads continue where they stopped.`,
     [ids.length],
   );
   if (ids.length === 0) return null;

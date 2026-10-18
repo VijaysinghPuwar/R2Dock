@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { ConnectionSummary } from "../ipc/bindings/ConnectionSummary";
 import { hasMod, isEditableTarget } from "../lib/platform";
-import { copyKeys, deleteRows, type ExplorerContext } from "../features/browser/actions";
+import { copyKeys, deleteRows, renameRow, type ExplorerContext } from "../features/browser/actions";
 import { selectedRows, useBrowserStore } from "../features/browser/browserStore";
 import { pickAndUpload } from "../features/browser/upload";
 import { usePreviewStore } from "../features/preview/previewStore";
@@ -38,8 +38,9 @@ export function useGlobalShortcuts() {
       const nav = useNavStore.getState();
       const ui = useUiStore.getState();
 
-      // Refresh never reloads the webview.
-      if (key === "F5" || (mod && lower === "r" && !e.shiftKey)) {
+      // Refresh never reloads the webview, with or without Shift (a hard
+      // reload would wipe the app's state).
+      if (key === "F5" || (mod && lower === "r")) {
         e.preventDefault();
         refreshCurrentView(client);
         return;
@@ -134,6 +135,13 @@ export function useGlobalShortcuts() {
         if (selection.length === 0) return;
         e.preventDefault();
         deleteRows(ctx, selection);
+        return;
+      }
+      // F2 renames, as in File Explorer.
+      const only = selection.length === 1 ? selection[0] : undefined;
+      if (key === "F2" && only) {
+        e.preventDefault();
+        renameRow(ctx, only);
         return;
       }
       if ((key === "Backspace" && !mod) || (e.altKey && key === "ArrowUp")) {

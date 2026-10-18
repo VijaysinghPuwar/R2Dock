@@ -2,6 +2,36 @@
 
 All notable changes are listed here. The format follows Keep a Changelog, and the project uses Semantic Versioning.
 
+## [0.4.1] - 2026-10-18
+
+Tested end to end on Windows 11 against a local S3 server, with stress runs of 3,000 files (1.3 GB) and UI runs of 2,000 transfers.
+
+### Fixed
+
+- Downloads never fall back to the raw object key: a name that cannot exist on the disk (for example only dots or spaces on Windows, or longer than 255 bytes) is given a safe name.
+- Downloads of very long file names no longer fail on the temporary file, and "Keep both" names stay within the file name limit.
+- Two objects that map to the same file on Windows or macOS (`A.txt` and `a.txt`, or `a:b` and `a_b`) are saved under separate names instead of overwriting each other.
+- Windows device names `COM0`, `LPT0`, and the superscript forms (`COM¹`) are renamed like `CON` and `NUL`.
+- A resumed download starts over when a server or proxy ignores the byte range, and re-fetches the last 1 MiB after a crash, so a partial file is never joined to the wrong data.
+- A transfer that finished just before the app closed is marked complete on the next launch instead of being uploaded or downloaded again.
+- The transfer journal and settings are written one at a time, so an older copy can never replace a newer one; a journal write that fails because Windows briefly locks the file is retried.
+- Activity rows are no longer lost while today's CSV is open in Excel: they go to a side file that export and clean-up include. Exporting over a daily log with different letter case is refused, and cells with `;` are quoted for Excel in semicolon locales.
+- A failed settings save no longer leaves the app using settings the screen does not show.
+- Removing or reinstalling the compression tools is refused while files are compressing, and a reinstall that fails keeps the old tools.
+- The tools download view survives leaving and reopening Settings; the quality preview can be restarted without mixing samples.
+- A file that keeps changing while it is compressed fails after two attempts instead of being re-encoded forever.
+- Transfer history trimming no longer drops an entry finished at the same moment, and no longer logs a warning on first launch.
+- Selecting a whole drive for upload explains why it was skipped; folders holding only hidden system files upload as empty folders.
+- The sidebar shows a connection as online or offline from finished transfers, not only after a connection test.
+- The transfer dock no longer shows an old speed and time left while a transfer waits to retry.
+
+### Changed
+
+- Large queues stay responsive: transfer updates are applied in batches. With 2,000 downloads the longest pause in the window went from 5.1 s to under 20 ms, and the queue finished in half the time.
+- The window opens only after the interface has loaded, so Windows no longer shows a blank white window at start.
+- F2 renames the selected file or folder.
+- Ctrl+Shift+R and F5 refresh the current view and never reload the window.
+
 ## [0.4.0] - 2026-10-17
 
 ### Added

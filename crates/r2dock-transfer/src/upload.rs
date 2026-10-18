@@ -280,6 +280,40 @@ async fn reconcile(
     Ok(true)
 }
 
+/// True when the upload id is gone because the upload was completed: every
+/// part was saved and the object at the key has exactly the expected ETag.
+async fn finished_before_restart(ctx: &JobCtx, spec: &UploadSpec, state: &MultipartState) -> bool {
+    let Ok(parts) = plan_parts(state.fingerprint.len, state.part_size) else {
+        return false;
+    };
+    if parts.len() != state.done.len() {
+        return false;
+    }
+    let digests: Vec<[u8; 16]> = state
+        .done
+        .values()
+        .filter_map(|p| {
+            hex::decode(&p.md5)
+                .ok()
+                .and_then(|v| <[u8; 16]>::try_from(v).ok())
+        })
+        .collect();
+    if digests.len() != state.done.len() {
+        return false;
+    }
+    let expected = multipart_etag(&digests);
+    match ctx.client.head_object(&spec.bucket, &state.key).await {
+        Ok(head) => {
+            head.size == state.fingerprint.len
+                && head
+                    .etag
+                    .as_deref()
+                    .is_some_and(|e| normalize(e) == expected)
+        }
+        Err(_) => false,
+    }
+}
+
 async fn upload_part(
     ctx: &JobCtx,
     spec: &UploadSpec,
@@ -345,6 +379,11 @@ async fn multipart(
             if reconcile(ctx, spec, &mut s).await? {
                 ctx.save_resume(ResumeState::Multipart(s.clone()));
                 s
+            } else if finished_before_restart(ctx, spec, &s).await {
+                // The app stopped after R2 finished the upload but before the
+                // journal noted it: the object is already ours.
+                ctx.clear_resume();
+                return Ok(Outcome::Completed);
             } else {
                 ctx.clear_resume();
                 if let Err(outcome) = resolve_key(ctx, spec).await? {

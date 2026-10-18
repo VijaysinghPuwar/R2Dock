@@ -68,6 +68,10 @@ impl History {
     /// Read entries, newest first. Malformed lines are skipped. Blocking.
     pub fn read(&self, limit: usize) -> Vec<HistoryEntry> {
         let _guard = self.lock.lock();
+        self.read_locked(limit)
+    }
+
+    fn read_locked(&self, limit: usize) -> Vec<HistoryEntry> {
         let Ok(file) = std::fs::File::open(&self.path) else {
             return Vec::new();
         };
@@ -83,7 +87,13 @@ impl History {
 
     /// Drop entries older than `days` and keep at most `MAX_ENTRIES`. Blocking.
     pub fn trim(&self, days: u32, now: DateTime<Utc>) {
-        let mut entries = self.read(usize::MAX);
+        // Hold the lock from read to replace, so an entry appended meanwhile
+        // is not lost.
+        let _guard = self.lock.lock();
+        if !self.path.exists() {
+            return;
+        }
+        let mut entries = self.read_locked(usize::MAX);
         let cutoff = now - Duration::days(i64::from(days));
         entries.retain(|e| {
             DateTime::parse_from_rfc3339(&e.finished_at)
@@ -91,7 +101,6 @@ impl History {
         });
         entries.truncate(MAX_ENTRIES);
         entries.reverse();
-        let _guard = self.lock.lock();
         let mut out = String::new();
         for e in &entries {
             if let Ok(l) = serde_json::to_string(e) {

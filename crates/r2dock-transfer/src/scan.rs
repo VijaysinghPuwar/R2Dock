@@ -67,7 +67,14 @@ pub fn scan(paths: &[PathBuf], include_hidden_os_files: bool, home: Option<&Path
         });
     };
     for root in paths {
-        let Some(base) = root.parent() else { continue };
+        let Some(base) = root.parent() else {
+            skip(
+                &mut out,
+                root,
+                "A whole drive cannot be uploaded. Choose the folders inside it.",
+            );
+            continue;
+        };
         let meta = match std::fs::symlink_metadata(root) {
             Ok(m) => m,
             Err(_) => {
@@ -96,16 +103,17 @@ pub fn scan(paths: &[PathBuf], include_hidden_os_files: bool, home: Option<&Path
                 }
             };
             let path = entry.path();
-            // Count children for empty-folder detection.
-            if let Some(parent) = path.parent()
-                && let Some(slot) = dir_children.iter_mut().rev().find(|(d, _)| d == parent)
-            {
-                slot.1 += 1;
-            }
             let ft = entry.file_type();
             let name = entry.file_name().to_string_lossy();
             if !include_hidden_os_files && HIDDEN_OS_FILES.contains(&name.as_ref()) {
                 continue;
+            }
+            // Count children for empty-folder detection. Hidden OS files are
+            // not uploaded, so a folder holding only those is still empty.
+            if let Some(parent) = path.parent()
+                && let Some(slot) = dir_children.iter_mut().rev().find(|(d, _)| d == parent)
+            {
+                slot.1 += 1;
             }
             let Some(components) = components_of(base, path) else {
                 skip(

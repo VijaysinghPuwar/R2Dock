@@ -118,7 +118,7 @@ pub async fn delete_keys(
         processed += n;
         match result {
             Ok(failed) => {
-                deleted += n - failed.len() as u64;
+                deleted += n.saturating_sub(failed.len() as u64);
                 failures.extend(failed);
             }
             Err(e) => {

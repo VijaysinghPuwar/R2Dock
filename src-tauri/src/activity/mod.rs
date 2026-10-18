@@ -1,6 +1,8 @@
 //! Activity log: one CSV row per user action and its result, for
 //! troubleshooting. Files are `activity-YYYY-MM-DD.csv` (UTC date) in a
-//! folder the user can change in Settings. Version 0.1.x wrote
+//! folder the user can change in Settings. While the day's file is locked
+//! (for example open in Excel), rows go to `activity-YYYY-MM-DD-<session>.csv`.
+//! Version 0.1.x wrote
 //! `activity-YYYY-MM-DD.jsonl`; those files are still trimmed and exported.
 //!
 //! Privacy rules:
@@ -48,12 +50,14 @@ impl ActivityLog {
         let dir = Arc::new(RwLock::new(dir));
         let (tx, rx) = channel::<(String, String)>();
         let writer_dir = dir.clone();
+        let session = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+        let writer_session = session.clone();
         let spawned = std::thread::Builder::new()
             .name("r2dock-activity".into())
             .spawn(move || {
                 while let Ok((date, line)) = rx.recv() {
                     let dir = writer_dir.read().clone();
-                    write_line(&dir, &date, &line);
+                    write_line(&dir, &date, &line, &writer_session);
                 }
             })
             .is_ok();
@@ -61,7 +65,7 @@ impl ActivityLog {
             dir,
             enabled: AtomicBool::new(enabled),
             names: AtomicBool::new(names),
-            session: uuid::Uuid::new_v4().simple().to_string()[..8].to_string(),
+            session,
             tx: spawned.then_some(tx),
         })
     }
@@ -216,19 +220,30 @@ impl ActivityLog {
     }
 }
 
-fn write_line(dir: &Path, date: &str, line: &str) {
+/// Append a line to the day's file. When that file cannot be opened (on
+/// Windows, Excel keeps an open CSV locked), the line goes to
+/// `activity-YYYY-MM-DD-<session>.csv` instead, which export and trim treat
+/// as part of the same day.
+fn write_line(dir: &Path, date: &str, line: &str, session: &str) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
-    let file = dir.join(format!("{FILE_PREFIX}{date}.csv"));
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(file) {
-        // A new (or emptied) file starts with the byte order mark and header.
-        let fresh = f.metadata().is_ok_and(|m| m.len() == 0);
-        if fresh {
-            let _ = writeln!(f, "{}{}", csv::BOM, csv::header_line());
+    let daily = dir.join(format!("{FILE_PREFIX}{date}.csv"));
+    let fallback = dir.join(format!("{FILE_PREFIX}{date}-{session}.csv"));
+    for file in [daily, fallback] {
+        if append_line(&file, line).is_ok() {
+            return;
         }
-        let _ = writeln!(f, "{line}");
     }
+}
+
+fn append_line(file: &Path, line: &str) -> std::io::Result<()> {
+    let mut f = OpenOptions::new().create(true).append(true).open(file)?;
+    // A new (or emptied) file starts with the byte order mark and header.
+    if f.metadata()?.len() == 0 {
+        writeln!(f, "{}{}", csv::BOM, csv::header_line())?;
+    }
+    writeln!(f, "{line}")
 }
 
 /// One action being recorded. Call [`Act::end`] with the result.
@@ -408,6 +423,37 @@ mod tests {
         log.event("app_start", Map::new());
         std::thread::sleep(Duration::from_millis(100));
         assert!(!dir.path().join("a").exists());
+    }
+
+    #[test]
+    fn locked_daily_file_falls_back_to_a_session_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        // A folder with the daily name cannot be opened for append, like a
+        // file Excel holds open.
+        std::fs::create_dir(d.join("activity-2026-10-18.csv")).unwrap();
+        write_line(d, "2026-10-18", "row-1", "ab12cd34");
+        write_line(d, "2026-10-18", "row-2", "ab12cd34");
+        let text = std::fs::read_to_string(d.join("activity-2026-10-18-ab12cd34.csv")).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                format!("{}{}", csv::BOM, csv::header_line()).as_str(),
+                "row-1",
+                "row-2"
+            ]
+        );
+        assert!(export::file_date("activity-2026-10-18-ab12cd34.csv").is_some());
+
+        // Once the daily file is free again, lines go back to it.
+        std::fs::remove_dir(d.join("activity-2026-10-18.csv")).unwrap();
+        write_line(d, "2026-10-18", "row-3", "ab12cd34");
+        let daily = std::fs::read_to_string(d.join("activity-2026-10-18.csv")).unwrap();
+        assert!(daily.ends_with(
+            "row-3
+"
+        ));
     }
 
     #[test]

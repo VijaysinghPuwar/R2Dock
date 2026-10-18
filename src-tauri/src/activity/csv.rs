@@ -157,7 +157,8 @@ pub fn cell(raw: &str) -> String {
     if text.starts_with(['=', '+', '-', '@', '\t', '\r']) {
         text.insert(0, '\'');
     }
-    if text.contains([',', '"']) || text.starts_with(' ') || text.ends_with(' ') {
+    // Semicolons too: Excel in many locales splits on them.
+    if text.contains([',', '"', ';']) || text.starts_with(' ') || text.ends_with(' ') {
         format!("\"{}\"", text.replace('"', "\"\""))
     } else {
         text
@@ -274,6 +275,7 @@ mod tests {
         let table = [
             ("plain", "plain"),
             ("a,b", "\"a,b\""),
+            ("a;b", "\"a;b\""),
             ("say \"hi\"", "\"say \"\"hi\"\"\""),
             ("two\nlines\r\nhere", "two lines  here"),
             (" padded ", "\" padded \""),

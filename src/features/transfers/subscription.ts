@@ -25,8 +25,13 @@ function commonPrefix(keys: string[]): string {
   return prefix;
 }
 
+/** How long transfer events are collected before they are applied together. */
+const FLUSH_MS = 50;
+
 /** Tracks jobs started since the queue was last idle, to toast once per batch. */
 const batch = new Map<string, Direction>();
+/** Ids in `batch` that are still working, so the idle check is O(1) per event. */
+const moving = new Set<string>();
 const pendingInvalidations = new Map<string, number>();
 
 function scheduleListingRefresh(client: QueryClient, connectionId: string, bucket: string) {
@@ -80,9 +85,16 @@ function afterEvent(client: QueryClient, before: Record<string, JobSnapshot>, ev
   const touched: JobSnapshot[] =
     event.type === "added" || event.type === "snapshot" ? event.jobs : event.type === "updated" ? [event.job] : [];
 
+  // A snapshot replaces every job, so forget ids it no longer lists.
+  if (event.type === "snapshot") moving.clear();
   for (const job of touched) {
     const prev = before[job.id];
-    if (isMoving(job.state) && !batch.has(job.id)) batch.set(job.id, job.direction);
+    if (isMoving(job.state)) {
+      if (!batch.has(job.id)) batch.set(job.id, job.direction);
+      moving.add(job.id);
+    } else {
+      moving.delete(job.id);
+    }
     if (job.direction === "upload" && job.state === "completed" && prev?.state !== "completed") {
       scheduleListingRefresh(client, job.connectionId, job.bucket);
     }
@@ -98,11 +110,15 @@ function afterEvent(client: QueryClient, before: Record<string, JobSnapshot>, ev
     });
   }
 
-  if (batch.size === 0) return;
+  if (event.type === "removed") for (const id of event.ids) moving.delete(id);
+  if (batch.size === 0 || moving.size > 0) return; // still working
   const batchJobs: JobSnapshot[] = [];
   for (const id of batch.keys()) {
     const job = state.jobs[id];
-    if (job && isMoving(job.state)) return; // still working
+    if (job && isMoving(job.state)) {
+      moving.add(job.id);
+      return;
+    }
     if (job) batchJobs.push(job);
   }
   batch.clear();
@@ -116,10 +132,19 @@ function afterEvent(client: QueryClient, before: Record<string, JobSnapshot>, ev
 export function startTransferSubscription(client: QueryClient): void {
   if (started) return;
   started = true;
-  transferSubscribe((event) => {
+  // Events arrive in bursts (thousands for a big queue). Apply each burst as
+  // one store update so the window stays responsive.
+  let pending: TransferEvent[] = [];
+  const flush = () => {
+    const events = pending;
+    pending = [];
     const before = useTransferStore.getState().jobs;
-    useTransferStore.getState().apply(event);
-    afterEvent(client, before, event);
+    useTransferStore.getState().applyMany(events);
+    for (const event of events) afterEvent(client, before, event);
+  };
+  transferSubscribe((event) => {
+    if (pending.length === 0) setTimeout(flush, FLUSH_MS);
+    pending.push(event);
   }).catch((e: unknown) => {
     started = false;
     toast.danger(`Transfer updates are not available. ${errorMessage(e)}`);

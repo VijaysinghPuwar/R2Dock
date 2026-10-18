@@ -20,6 +20,7 @@ export function shortcutList(mod: string, mac: boolean): Shortcut[] {
     [["F5"], "Refresh listing"],
     [[mod, "A"], "Select all loaded items"],
     [mac ? [mod, "Backspace"] : ["Delete"], "Delete selected"],
+    [["F2"], "Rename selected"],
     [[mod, "["], "Back"],
     [[mod, "]"], "Forward"],
     [["Backspace"], "Parent folder"],

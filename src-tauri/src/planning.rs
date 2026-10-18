@@ -4,8 +4,11 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use futures_util::StreamExt;
-use r2dock_core::keys::{base_name, parent_prefix};
-use r2dock_core::path_guard::{Platform, key_to_relative_path};
+use r2dock_core::keys::{base_name, keep_both_name, parent_prefix};
+use r2dock_core::path_guard::{
+    MAX_COMPONENT_BYTES, PathGuardError, Platform, key_to_relative_path,
+    key_to_relative_path_lossy, truncate_name,
+};
 use r2dock_core::policy::ConflictPolicy;
 use r2dock_r2::bulk::ObjectRef;
 use r2dock_r2::{R2Client, R2Error};
@@ -232,9 +235,13 @@ pub fn download_items(
 ) -> (Vec<DownloadItem>, Vec<PathBuf>) {
     let mut items = Vec::new();
     let mut dirs = Vec::new();
-    let rel_for = |rel_key: &str| {
-        key_to_relative_path(rel_key, Platform::current())
-            .unwrap_or_else(|_| PathBuf::from(rel_key))
+    // A key that climbs out with ".." keeps its raw path so the job fails in
+    // the path guard and the user sees why. Any other unusable segment (empty
+    // after trimming, too long) becomes a safe name instead of the raw key.
+    let rel_for = |rel_key: &str| match key_to_relative_path(rel_key, Platform::current()) {
+        Ok(p) => p,
+        Err(PathGuardError::Traversal) => PathBuf::from(rel_key),
+        Err(_) => key_to_relative_path_lossy(rel_key, Platform::current()),
     };
     for obj in objects {
         let rel_key = if keys.contains(&obj.key) {
@@ -257,7 +264,41 @@ pub fn download_items(
             rel_path: rel_for(&rel_key),
         });
     }
+    rename_collisions(&mut items);
     (items, dirs)
+}
+
+/// Windows and macOS file names ignore case, and sanitizing can map two keys
+/// (`a:b` and `a_b`) to one name. Give later duplicates a "Keep both" name so
+/// two downloads never write the same file.
+fn rename_collisions(items: &mut [DownloadItem]) {
+    let fold = |p: &Path| {
+        let s = p.to_string_lossy().into_owned();
+        if cfg!(any(windows, target_os = "macos")) {
+            s.to_lowercase()
+        } else {
+            s
+        }
+    };
+    let mut taken: HashSet<String> = HashSet::with_capacity(items.len());
+    for item in items.iter_mut() {
+        if taken.insert(fold(&item.rel_path)) {
+            continue;
+        }
+        let name = item
+            .rel_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let name = truncate_name(&name, MAX_COMPONENT_BYTES - 8);
+        for n in 1..=u32::MAX {
+            let candidate = item.rel_path.with_file_name(keep_both_name(&name, n));
+            if taken.insert(fold(&candidate)) {
+                item.rel_path = candidate;
+                break;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -379,6 +420,20 @@ mod tests {
     }
 
     #[test]
+    fn odd_segments_get_safe_names_not_raw_keys() {
+        let objects = vec![o("p/. ./x.txt"), o(&format!("p/{}.txt", "n".repeat(300)))];
+        let (items, _) = download_items(&objects, &[], &["p/".into()]);
+        for i in &items {
+            for c in i.rel_path.components() {
+                let std::path::Component::Normal(name) = c else {
+                    panic!("bad component in {:?}", i.rel_path)
+                };
+                assert!(name.len() <= MAX_COMPONENT_BYTES);
+            }
+        }
+    }
+
+    #[test]
     fn default_policies() {
         assert_eq!(
             default_policy(ConflictPolicy::Ask, true),
@@ -392,6 +447,23 @@ mod tests {
             default_policy(ConflictPolicy::Replace, true),
             ConflictPolicy::Replace
         );
+    }
+
+    #[test]
+    fn download_names_that_collide_on_disk_get_new_names() {
+        let objects = vec![o("p/A.txt"), o("p/a.txt"), o("p/x:y"), o("p/x_y")];
+        let (items, _) = download_items(&objects, &[], &["p/".into()]);
+        let mut seen = HashSet::new();
+        for i in &items {
+            let s = i.rel_path.to_string_lossy().to_string();
+            let s = if cfg!(any(windows, target_os = "macos")) {
+                s.to_lowercase()
+            } else {
+                s
+            };
+            assert!(seen.insert(s), "{:?} written twice", i.rel_path);
+        }
+        assert_eq!(items.len(), 4);
     }
 
     #[test]

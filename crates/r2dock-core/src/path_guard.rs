@@ -62,12 +62,64 @@ fn is_windows_reserved(stem: &str) -> bool {
     match upper.as_str() {
         "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" => true,
         _ => {
-            let bytes = upper.as_bytes();
-            bytes.len() == 4
-                && (upper.starts_with("COM") || upper.starts_with("LPT"))
-                && (b'1'..=b'9').contains(&bytes[3])
+            // COM0-COM9 and LPT0-LPT9, plus the superscript digits Windows
+            // also treats as device numbers.
+            let Some(rest) = upper
+                .strip_prefix("COM")
+                .or_else(|| upper.strip_prefix("LPT"))
+            else {
+                return false;
+            };
+            let mut chars = rest.chars();
+            matches!(
+                (chars.next(), chars.next()),
+                (Some('0'..='9' | '¹' | '²' | '³'), None)
+            )
         }
     }
+}
+
+/// Shorten a file name to at most `max` bytes, keeping a short extension and
+/// cutting only at character boundaries.
+pub fn truncate_name(name: &str, max: usize) -> String {
+    if name.len() <= max {
+        return name.to_string();
+    }
+    let ext = match name.rfind('.') {
+        Some(i) if i > 0 && name.len() - i <= 16 && name.len() - i < max => &name[i..],
+        _ => "",
+    };
+    let stem = &name[..name.len() - ext.len()];
+    let mut cut = max - ext.len();
+    while !stem.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}{ext}", &stem[..cut])
+}
+
+/// Like [`key_to_relative_path`], but never fails on a single bad segment:
+/// empty or dot-only segments become `_` and long names are shortened.
+/// Used for downloads, where an odd key should still land as a usable file.
+pub fn key_to_relative_path_lossy(rel_key: &str, platform: Platform) -> PathBuf {
+    let mut path = PathBuf::new();
+    for segment in rel_key.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        let safe = match sanitize_component(segment, platform) {
+            Ok(s) => s,
+            Err(PathGuardError::ComponentTooLong) => {
+                sanitize_component(&truncate_name(segment, MAX_COMPONENT_BYTES), platform)
+                    .unwrap_or_else(|_| "_".to_string())
+            }
+            Err(_) => "_".to_string(),
+        };
+        path.push(safe);
+    }
+    if path.as_os_str().is_empty() {
+        path.push("_");
+    }
+    path
 }
 
 /// Make one path segment safe for the target platform.
@@ -306,7 +358,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn windows_device_names_with_zero_and_superscripts() {
+        for name in ["COM0", "lpt0.txt", "COM¹", "LPT³.log", "com9"] {
+            let out = sanitize_component(name, Platform::Windows).unwrap();
+            assert!(out.starts_with('_'), "{name} -> {out}");
+        }
+        for name in ["COM10", "COMx", "LPT", "computer.txt"] {
+            assert_eq!(sanitize_component(name, Platform::Windows).unwrap(), name);
+        }
+    }
+
+    #[test]
+    fn truncates_names_keeping_extension() {
+        let long = format!("{}.mp3", "a".repeat(300));
+        let t = truncate_name(&long, 255);
+        assert_eq!(t.len(), 255);
+        assert!(t.ends_with(".mp3"));
+        // Multi-byte characters are never split.
+        let wide = "é".repeat(200);
+        let t = truncate_name(&wide, 101);
+        assert!(t.len() <= 101 && t.chars().all(|c| c == 'é'));
+        assert_eq!(truncate_name("short.txt", 255), "short.txt");
+    }
+
+    #[test]
+    fn lossy_paths_never_use_the_raw_key() {
+        let p = key_to_relative_path_lossy("photos/. ./x.jpg", Platform::Windows);
+        assert_eq!(p, PathBuf::from("photos").join("_").join("x.jpg"));
+        let p = key_to_relative_path_lossy("a/../b", Platform::Windows);
+        assert_eq!(p, PathBuf::from("a").join("_").join("b"));
+        let long = "n".repeat(400);
+        let p = key_to_relative_path_lossy(&long, Platform::Windows);
+        assert_eq!(p.as_os_str().len(), MAX_COMPONENT_BYTES);
+        assert_eq!(
+            key_to_relative_path_lossy("///", Platform::Unix),
+            PathBuf::from("_")
+        );
+    }
+
     proptest! {
+        #[test]
+        fn lossy_never_escapes_root(key in "(?s).{0,80}") {
+            let p = key_to_relative_path_lossy(&key, Platform::current());
+            prop_assert!(p.is_relative());
+            for c in p.components() {
+                prop_assert!(matches!(c, Component::Normal(_)), "bad component in {:?}", p);
+            }
+        }
+
         #[test]
         fn never_escapes_root(key in "(?s).{0,60}") {
             // Paths are interpreted by the host, so only the host platform's rules apply.

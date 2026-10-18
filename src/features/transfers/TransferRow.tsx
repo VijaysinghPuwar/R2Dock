@@ -114,7 +114,7 @@ function statusParts(job: JobSnapshot): { text: string; aria: string } {
     case "running":
       break;
   }
-  if (job.state === "running" || job.state === "retrying") {
+  if (job.state === "running") {
     if (job.speedBps !== null) push(formatSpeed(job.speedBps));
     if (job.etaSecs !== null) push(formatEta(job.etaSecs), formatEtaWords(job.etaSecs));
   }

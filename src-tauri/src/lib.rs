@@ -158,6 +158,16 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.set_title(r2dock_core::APP_NAME);
     }
+    // Never leave the window hidden if the page-load event does not arrive.
+    let handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        if let Some(w) = handle.get_webview_window("main")
+            && !w.is_visible().unwrap_or(true)
+        {
+            let _ = w.show();
+        }
+    });
     Ok(())
 }
 
@@ -180,6 +190,13 @@ pub fn run() {
             });
         })
         .setup(|app| setup(app))
+        // The window starts hidden (tauri.conf.json) and is shown once the
+        // page has loaded, so Windows never flashes an empty white window.
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                let _ = webview.window().show();
+            }
+        })
         .on_window_event(dragdrop::handle);
     #[cfg(target_os = "macos")]
     let builder = builder.menu(menu::build).on_menu_event(menu::handle);

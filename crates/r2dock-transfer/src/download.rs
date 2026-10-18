@@ -17,6 +17,15 @@ use crate::retry::JobError;
 
 const KEEP_BOTH_LIMIT: u32 = 1000;
 
+/// Bytes dropped from the end of a partial file before resuming. After a
+/// crash or power loss the file can be longer than the data that reached the
+/// disk (the tail reads as zeros), so the last stretch is fetched again.
+const RESUME_BACKOFF: u64 = 1024 * 1024;
+
+/// Longest file name most file systems accept (NTFS counts UTF-16 units, so
+/// bytes are the stricter limit).
+const MAX_NAME_BYTES: usize = r2dock_core::path_guard::MAX_COMPONENT_BYTES;
+
 async fn blocking<T, F>(f: F) -> Result<T, JobError>
 where
     T: Send + 'static,
@@ -41,6 +50,8 @@ fn temp_path_for(final_path: &Path, job: crate::model::JobId) -> PathBuf {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let tag = &job.simple().to_string()[..8];
+    // "." + "." + 8 hex + ".r2dock-part" adds 22 bytes; keep the result valid.
+    let name = r2dock_core::path_guard::truncate_name(&name, MAX_NAME_BYTES - 22);
     final_path.with_file_name(format!(".{name}.{tag}.r2dock-part"))
 }
 
@@ -89,6 +100,8 @@ fn resolve_target(spec: &mut DownloadSpec) -> Result<Result<PathBuf, Outcome>, J
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            // Room for " (1000)" so the new name stays within the limit.
+            let name = r2dock_core::path_guard::truncate_name(&name, MAX_NAME_BYTES - 8);
             let free = first_free_name(&name, KEEP_BOTH_LIMIT, |n| exists_no_follow(&dir.join(n)))
                 .ok_or_else(|| {
                     JobError::fatal(AppError::new(
@@ -133,11 +146,19 @@ pub async fn run(ctx: &JobCtx, spec: &mut DownloadSpec) -> Result<Outcome, JobEr
             temp,
             final_path,
         }) => {
-            let len = std::fs::symlink_metadata(&temp)
-                .ok()
-                .filter(|m| m.is_file())
-                .map_or(0, |m| m.len());
-            (final_path, etag, len)
+            let temp_meta = std::fs::symlink_metadata(&temp).ok();
+            // The partial is saved only after the temp file exists, so a
+            // missing temp beside a full-size final file means the app
+            // stopped right after moving it into place.
+            if temp_meta.is_none()
+                && std::fs::symlink_metadata(&final_path)
+                    .is_ok_and(|m| m.is_file() && m.len() == spec.size)
+            {
+                ctx.clear_resume();
+                return Ok(Outcome::Completed);
+            }
+            let len = temp_meta.filter(|m| m.is_file()).map_or(0, |m| m.len());
+            (final_path, etag, len.saturating_sub(RESUME_BACKOFF))
         }
         _ => {
             let before = spec.rel_path.clone();
@@ -224,6 +245,15 @@ pub async fn run(ctx: &JobCtx, spec: &mut DownloadSpec) -> Result<Outcome, JobEr
         ))
     })?;
 
+    // A server or proxy that ignores Range sends the whole object: start over
+    // from zero rather than appending it after the partial data.
+    if offset > 0
+        && !out
+            .content_range()
+            .is_some_and(|r| r.starts_with(&format!("bytes {offset}-")))
+    {
+        offset = 0;
+    }
     let remote_etag = out.e_tag().map(str::to_string);
     let sse_c = out.sse_customer_algorithm().is_some();
     let body_len = u64::try_from(out.content_length().unwrap_or(0)).unwrap_or(0);
@@ -233,7 +263,7 @@ pub async fn run(ctx: &JobCtx, spec: &mut DownloadSpec) -> Result<Outcome, JobEr
         ctx.hooks.total(ctx.id, total);
     }
     // Reset or reopen the partial file first, then record what it holds.
-    let mut file = open_temp(&temp, offset > 0).await?;
+    let mut file = open_temp(&temp, offset).await?;
     ctx.save_resume(ResumeState::Download(DownloadState {
         etag: remote_etag.clone(),
         temp: temp.clone(),
@@ -351,19 +381,29 @@ fn stopped(ctx: &JobCtx, temp: &Path) -> Result<Outcome, JobError> {
     }
 }
 
-async fn open_temp(temp: &Path, append: bool) -> Result<tokio::fs::File, JobError> {
+/// Open the partial file keeping its first `keep` bytes, positioned at the end.
+async fn open_temp(temp: &Path, keep: u64) -> Result<tokio::fs::File, JobError> {
+    use tokio::io::AsyncSeekExt;
     let mut opts = tokio::fs::OpenOptions::new();
     opts.write(true).create(true);
-    if append {
-        opts.append(true);
-    } else {
+    if keep == 0 {
         opts.truncate(true);
     }
     #[cfg(unix)]
     opts.custom_flags(libc::O_NOFOLLOW);
-    opts.open(temp)
+    let mut file = opts
+        .open(temp)
         .await
-        .map_err(|e| JobError::io(&e, "save the download"))
+        .map_err(|e| JobError::io(&e, "save the download"))?;
+    if keep > 0 {
+        file.set_len(keep)
+            .await
+            .map_err(|e| JobError::io(&e, "save the download"))?;
+        file.seek(std::io::SeekFrom::Start(keep))
+            .await
+            .map_err(|e| JobError::io(&e, "save the download"))?;
+    }
+    Ok(file)
 }
 
 fn md5_file(path: &Path) -> Result<String, JobError> {

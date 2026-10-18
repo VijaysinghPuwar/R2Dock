@@ -303,10 +303,46 @@ async fn remove_deletes_everything() {
     let (pkg, fetch, _, _) = fixture();
     install_ok(dir.path(), &pkg, &fetch).await;
     std::fs::create_dir(dir.path().join(".staging-old")).unwrap();
+    std::fs::create_dir(dir.path().join(".old-install")).unwrap();
     std::fs::write(dir.path().join("keep.txt"), b"x").unwrap();
     remove(dir.path()).unwrap();
     assert_eq!(leftovers(dir.path()), vec!["keep.txt".to_string()]);
     remove(&dir.path().join("missing")).unwrap();
+}
+
+#[tokio::test]
+async fn reinstall_replaces_and_cleans_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let (pkg, fetch, ffmpeg, _) = fixture();
+    install_ok(dir.path(), &pkg, &fetch).await;
+    std::fs::create_dir(dir.path().join(".old-left")).unwrap();
+    let tools = install_ok(dir.path(), &pkg, &fetch).await;
+    assert_eq!(std::fs::read(&tools.ffmpeg).unwrap(), ffmpeg);
+    assert_eq!(
+        leftovers(dir.path()),
+        vec![format!("ffmpeg-{}", manifest::VERSION)]
+    );
+}
+
+#[tokio::test]
+async fn a_failed_swap_keeps_the_old_install() {
+    let dir = tempfile::tempdir().unwrap();
+    let (pkg, fetch, ffmpeg, _) = fixture();
+    let tools = install_ok(dir.path(), &pkg, &fetch).await;
+    let staging = tempfile::Builder::new()
+        .prefix(".staging-")
+        .tempdir_in(dir.path())
+        .unwrap();
+    // A staging folder that can no longer be moved.
+    std::fs::remove_dir(staging.path()).unwrap();
+    let dest = install_dir(dir.path());
+    swap_in(staging, &dest, dir.path()).await.unwrap_err();
+    assert_eq!(std::fs::read(&tools.ffmpeg).unwrap(), ffmpeg);
+    check_installed(dir.path(), Some(&pkg)).unwrap();
+    assert_eq!(
+        leftovers(dir.path()),
+        vec![format!("ffmpeg-{}", manifest::VERSION)]
+    );
 }
 
 #[test]

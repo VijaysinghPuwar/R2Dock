@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { INITIAL_TRANSFER_STATE, orderedJobs, reduceTransfers } from "./transferStore";
+import type { TransferEvent } from "../../ipc/bindings/TransferEvent";
+import { INITIAL_TRANSFER_STATE, orderedJobs, reduceTransferBatch, reduceTransfers } from "./transferStore";
 import { makeJob } from "./testJobs";
 
 const a = makeJob({ id: "a", name: "a.txt" });
@@ -40,6 +41,32 @@ describe("reduceTransfers", () => {
     expect(s.order).toEqual(["a", "b"]);
     s = reduceTransfers(s, { type: "updated", job: c });
     expect(s.order).toEqual(["a", "b", "c"]);
+  });
+
+  it("a batch gives the same result as applying events one by one", () => {
+    const events: TransferEvent[] = [
+      { type: "added", jobs: [a, b] },
+      { type: "updated", job: { ...a, state: "running" } },
+      { type: "updated", job: c },
+      { type: "removed", ids: ["b"] },
+      { type: "updated", job: { ...a, state: "completed" } },
+      { type: "authFailed", connectionId: "conn-1" },
+    ];
+    const one = events.reduce(reduceTransfers, INITIAL_TRANSFER_STATE);
+    const many = reduceTransferBatch(INITIAL_TRANSFER_STATE, events);
+    expect(many).toEqual(one);
+    expect(INITIAL_TRANSFER_STATE.order).toEqual([]);
+    expect(reduceTransferBatch(many, [])).toBe(many);
+  });
+
+  it("updating a known job keeps the same order array", () => {
+    const s1 = reduceTransfers(INITIAL_TRANSFER_STATE, { type: "added", jobs: [a, b] });
+    const s2 = reduceTransfers(s1, { type: "updated", job: { ...a, state: "running" } });
+    expect(s2.order).toBe(s1.order);
+    expect(s2.jobs.a?.state).toBe("running");
+    const s3 = reduceTransfers(s2, { type: "updated", job: c });
+    expect(s3.order).toEqual(["a", "b", "c"]);
+    expect(s1.order).toEqual(["a", "b"]);
   });
 
   it("progress updates byte counts and ignores unknown ids", () => {

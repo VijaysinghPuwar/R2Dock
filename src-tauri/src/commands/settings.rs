@@ -12,6 +12,10 @@ use crate::dialogs;
 use crate::dto::{ExportRange, LogKind, SettingsView};
 use crate::state::AppState;
 
+/// Held from changing the settings until they are on disk, so saves from
+/// these commands run one at a time and an older snapshot never lands last.
+static SAVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub fn view(state: &AppState) -> SettingsView {
     let preferences = state.settings.read().preferences.clone();
     SettingsView {
@@ -71,6 +75,7 @@ pub async fn settings_set(
     preferences: Preferences,
 ) -> CmdResult<SettingsView> {
     let new = preferences.sanitized();
+    let _saving = SAVE_LOCK.lock().await;
     let old = std::mem::replace(&mut state.settings.write().preferences, new.clone());
     // Record which settings changed (names only, never values of paths).
     let act = state
@@ -78,7 +83,12 @@ pub async fn settings_set(
         .start_action("settings_set")
         .field("changed", changed_fields(&old, &new));
     let result = state.save_settings().await;
-    apply(&state, log.0.as_ref());
+    if result.is_ok() {
+        apply(&state, log.0.as_ref());
+    } else {
+        // Keep memory in step with the file on disk.
+        state.settings.write().preferences = old;
+    }
     act.end(&result);
     result?;
     Ok(view(&state))
@@ -93,6 +103,7 @@ pub async fn settings_choose_download_dir(
         if !dir.is_dir() {
             return Err(AppError::invalid_input("Choose an existing folder."));
         }
+        let _saving = SAVE_LOCK.lock().await;
         state.settings.write().download_dir = Some(dir);
         let result = state.save_settings().await;
         state
@@ -115,6 +126,7 @@ pub async fn settings_choose_activity_dir(
         if !dir.is_dir() {
             return Err(AppError::invalid_input("Choose an existing folder."));
         }
+        let _saving = SAVE_LOCK.lock().await;
         state.settings.write().activity_dir = Some(dir);
         let result = state.save_settings().await;
         apply(&state, log.0.as_ref());
@@ -149,6 +161,7 @@ pub async fn activity_reset_dir(
     state: State<'_, AppState>,
     log: State<'_, crate::LogHandle>,
 ) -> CmdResult<SettingsView> {
+    let _saving = SAVE_LOCK.lock().await;
     state.settings.write().activity_dir = None;
     let result = state.save_settings().await;
     apply(&state, log.0.as_ref());
@@ -203,16 +216,23 @@ fn range_start(range: ExportRange, now: DateTime<Local>) -> Option<DateTime<Utc>
     }
 }
 
-/// Whether `dest` would replace one of the daily activity files.
+/// Whether `dest` would replace one of the daily activity files. Paths are
+/// resolved first and names compared without regard to case, because
+/// `Activity-2026-10-18.CSV` is the same file as `activity-2026-10-18.csv`
+/// on Windows and macOS.
 fn is_daily_file(dest: &Path, activity_dir: &Path) -> bool {
     let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let same_dir = dest
-        .parent()
-        .is_some_and(|p| canonical(p) == canonical(activity_dir));
+    // An existing file resolves to its real (long, correctly cased) name.
+    let dest = canonical(dest);
+    let same_dir = dest.parent().is_some_and(|p| {
+        let (a, b) = (canonical(p), canonical(activity_dir));
+        a == b || a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    });
+    // Windows ignores trailing dots and spaces in file names.
     let daily_name = dest
         .file_name()
         .and_then(|n| n.to_str())
-        .and_then(export::file_date)
+        .and_then(|n| export::file_date(n.trim_end_matches(['.', ' '])))
         .is_some();
     same_dir && daily_name
 }
@@ -281,6 +301,7 @@ pub async fn settings_reset(
     state: State<'_, AppState>,
     log: State<'_, crate::LogHandle>,
 ) -> CmdResult<SettingsView> {
+    let _saving = SAVE_LOCK.lock().await;
     *state.settings.write() = SettingsFile::default();
     let result = state.save_settings().await;
     apply(&state, log.0.as_ref());
@@ -329,6 +350,17 @@ mod tests {
         assert!(is_daily_file(&d.join("activity-2026-10-18.csv"), d));
         assert!(is_daily_file(&d.join("activity-2026-10-18.jsonl"), d));
         assert!(!is_daily_file(&d.join("r2dock-activity-2026-10-18.csv"), d));
+        // Case-only differences name the same file on Windows and macOS.
+        assert!(is_daily_file(&d.join("Activity-2026-10-18.CSV"), d));
+        assert!(is_daily_file(&d.join("ACTIVITY-2026-10-18.JSONL"), d));
+        assert!(is_daily_file(&d.join("activity-2026-10-18.csv."), d));
+        assert!(is_daily_file(
+            &d.join("activity-2026-10-18-ab12cd34.csv"),
+            d
+        ));
+        // An existing daily file reached through a differently cased name.
+        std::fs::write(d.join("activity-2026-10-17.csv"), "x").unwrap();
+        assert!(is_daily_file(&d.join("ACTIVITY-2026-10-17.Csv"), d));
         let other = tempfile::tempdir().unwrap();
         assert!(!is_daily_file(
             &other.path().join("activity-2026-10-18.csv"),

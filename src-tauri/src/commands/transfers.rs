@@ -455,6 +455,7 @@ pub async fn transfer_subscribe(
         if let TransferEvent::Updated { job } = &event {
             if let Some(state) = sink_app.try_state::<AppState>() {
                 record_job(&state, job);
+                state.connections.note_transfer(job);
             }
             match job.state {
                 JobState::Completed => {

@@ -402,6 +402,7 @@ When items are selected, the left group of the toolbar is replaced by a **select
 | Cmd/Ctrl + R or F5 | Refresh listing (overrides webview reload) |
 | Cmd/Ctrl + A | Select all loaded items |
 | Delete / Cmd + Backspace | Delete selected (always confirms) |
+| F2 | Rename the selected item |
 | Cmd/Ctrl + [ / Alt + Left | Back |
 | Cmd/Ctrl + ] / Alt + Right | Forward |
 | Backspace / Alt + Up | Go to parent folder |

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use r2dock_core::keys::{base_name, display_name};
 use r2dock_core::{AppError, ErrorCode};
-use r2dock_media::ffmpeg::Ffmpeg;
+use r2dock_media::ffmpeg::{EncodeError, Ffmpeg};
 use r2dock_media::pipeline::{self, PrepareJob, Prepared, Unchanged};
 
 use super::Inner;
@@ -27,6 +27,9 @@ use crate::source::SourceFile;
 
 /// How often compression progress is sent.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
+
+/// How many times a file that changed during its encode is encoded again.
+const CHANGED_RETRIES: u32 = 2;
 
 /// What compression needs from the app: the verified FFmpeg and a work folder.
 #[derive(Debug, Clone)]
@@ -272,31 +275,10 @@ async fn compress_job(
         key: spec.key.clone(),
     });
 
-    // Open the original the safe way (no symlinks, same file as scanned).
-    let local = spec.local.clone();
-    let identity = spec.identity;
-    let source = tokio::task::spawn_blocking(move || SourceFile::open(&local, identity)).await;
-    let source = match source {
-        Ok(Ok(s)) => s,
-        Ok(Err(e)) => {
-            inner.finish(id, JobState::Failed, Some(e.app));
-            return;
-        }
-        Err(_) => {
-            inner.finish(
-                id,
-                JobState::Failed,
-                Some(failure_error("a background task stopped")),
-            );
-            return;
-        }
-    };
-    let fingerprint = source.fingerprint;
-
     let stem = id.simple().to_string();
     let progress_inner = inner.clone();
     let mut last = Instant::now() - PROGRESS_EVERY;
-    let on_fraction = move |f: f64| {
+    let mut on_fraction = move |f: f64| {
         if last.elapsed() < PROGRESS_EVERY {
             return;
         }
@@ -312,34 +294,67 @@ async fn compress_job(
             progress_inner.emit(TransferEvent::Updated { job: Box::new(job) });
         }
     };
-    let result = pipeline::prepare(
-        &media.ffmpeg,
-        PrepareJob {
-            input: &spec.local,
-            work_dir: &media.work_dir,
-            stem: &stem,
-            settings: &request.settings,
-            video: &request.video,
-            content: request.content,
-        },
-        &control.cancel,
-        on_fraction,
-    )
-    .await;
+
+    // A file that changes while it is compressed is compressed again, a
+    // limited number of times; one that keeps changing counts as a failure.
+    let mut attempts = 0;
+    let (result, fingerprint) = loop {
+        // Open the original the safe way (no symlinks, same file as scanned).
+        let local = spec.local.clone();
+        let identity = spec.identity;
+        let source = tokio::task::spawn_blocking(move || SourceFile::open(&local, identity)).await;
+        let source = match source {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => {
+                inner.finish(id, JobState::Failed, Some(e.app));
+                return;
+            }
+            Err(_) => {
+                inner.finish(
+                    id,
+                    JobState::Failed,
+                    Some(failure_error("a background task stopped")),
+                );
+                return;
+            }
+        };
+        let fingerprint = source.fingerprint;
+        let result = pipeline::prepare(
+            &media.ffmpeg,
+            PrepareJob {
+                input: &spec.local,
+                work_dir: &media.work_dir,
+                stem: &stem,
+                settings: &request.settings,
+                video: &request.video,
+                content: request.content,
+            },
+            &control.cancel,
+            &mut on_fraction,
+        )
+        .await;
+        let Ok(Prepared::Compressed(c)) = &result else {
+            break (result, fingerprint);
+        };
+        // The original must not have changed while it was compressed.
+        let unchanged = tokio::task::spawn_blocking(move || source.ensure_unchanged().is_ok())
+            .await
+            .unwrap_or(false);
+        if unchanged {
+            break (result, fingerprint);
+        }
+        let _ = std::fs::remove_file(&c.output);
+        attempts += 1;
+        if attempts > CHANGED_RETRIES {
+            break (
+                Err(EncodeError::Failed("the file is still changing".into())),
+                fingerprint,
+            );
+        }
+    };
 
     match result {
         Ok(Prepared::Compressed(c)) => {
-            // The original must not have changed while it was compressed.
-            let check = source;
-            let unchanged = tokio::task::spawn_blocking(move || check.ensure_unchanged().is_ok())
-                .await
-                .unwrap_or(false);
-            if !unchanged {
-                let _ = std::fs::remove_file(&c.output);
-                inner.requeue_front(id);
-                inner.wake.notify_one();
-                return;
-            }
             let key = pipeline::upload_key(&spec.key, &c);
             let copy = CompressedCopy {
                 temp: c.output.clone(),
@@ -423,5 +438,120 @@ fn clear_control(inner: &Inner, id: JobId, control: &Arc<RunControl>) {
         && e.control.as_ref().is_some_and(|c| Arc::ptr_eq(c, control))
     {
         e.control = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use r2dock_core::policy::ConflictPolicy;
+    use r2dock_media::plan::AudioSettings;
+    use r2dock_r2::R2Client;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::engine::{BoxFuture, ClientProvider, Engine, EngineConfig};
+    use crate::model::CompressionRequest;
+
+    /// Never reached: the job fails before it uploads.
+    struct NoClient;
+
+    impl ClientProvider for NoClient {
+        fn client(&self, _connection: Uuid) -> BoxFuture<'_, Result<R2Client, AppError>> {
+            Box::pin(async { Err(AppError::internal("no client in this test")) })
+        }
+    }
+
+    fn ffmpeg_bin() -> Option<PathBuf> {
+        let bin = std::env::var_os("R2DOCK_TEST_FFMPEG").map(PathBuf::from)?;
+        let ok = std::process::Command::new(&bin)
+            .arg("-version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        ok.then_some(bin)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_file_that_keeps_changing_fails_after_retries() {
+        let Some(bin) = ffmpeg_bin() else {
+            eprintln!("R2DOCK_TEST_FFMPEG not set; skipping");
+            return;
+        };
+        let data = tempfile::tempdir().unwrap();
+        let input = data.path().join("talk.mp3");
+        let out = std::process::Command::new(&bin)
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi"])
+            .args(["-i", "sine=f=220:r=22050:d=600", "-c:a", "libmp3lame"])
+            .args(["-b:a", "64k", "-ac", "1"])
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        let engine = Engine::start(
+            Arc::new(NoClient),
+            EngineConfig::new(data.path().to_path_buf()),
+        );
+        engine.set_media(Some(MediaRuntime {
+            ffmpeg: Ffmpeg::new(bin),
+            work_dir: data.path().join("compress"),
+            encode_limit: 1,
+        }));
+
+        // Something keeps writing to the file the whole time.
+        let stop = Arc::new(AtomicBool::new(false));
+        let writer = {
+            let stop = stop.clone();
+            let path = input.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&path) {
+                        let _ = std::io::Write::write_all(&mut f, &[0]);
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            })
+        };
+
+        let size = std::fs::metadata(&input).unwrap().len();
+        let ids = engine.enqueue(
+            vec![JobSpec::Upload(UploadSpec {
+                connection: Uuid::nil(),
+                bucket: "bkt".into(),
+                key: "talk.mp3".into(),
+                local: input.clone(),
+                size,
+                policy: ConflictPolicy::Replace,
+                identity: None,
+                compression: Some(CompressionRequest {
+                    settings: AudioSettings::default(),
+                    content: Default::default(),
+                    on_failure: CompressionFailure::SkipFile,
+                    video: Default::default(),
+                }),
+                compressed: None,
+            })],
+            None,
+        );
+        let mut job = None;
+        for _ in 0..3000 {
+            let j = engine
+                .snapshot()
+                .into_iter()
+                .find(|j| j.id == ids[0])
+                .unwrap();
+            if j.state == JobState::Failed {
+                job = Some(j);
+                break;
+            }
+            assert_ne!(j.state, JobState::Completed);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        stop.store(true, Ordering::Relaxed);
+        writer.join().unwrap();
+        let job = job.expect("the job never stopped compressing");
+        let message = job.error.unwrap().message;
+        assert!(message.contains("still changing"), "{message}");
     }
 }

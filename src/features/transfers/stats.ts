@@ -85,6 +85,9 @@ export function aggregate(jobs: JobSnapshot[]): Aggregate {
     for (const j of moving) {
       done += j.transferredBytes;
       total += j.totalBytes;
+      // Speed and time left only mean something while bytes are moving; a
+      // job waiting to retry keeps its last values.
+      if (j.state !== "running") continue;
       if (j.speedBps !== null) {
         speed += j.speedBps;
         speedKnown = true;

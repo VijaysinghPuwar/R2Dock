@@ -93,15 +93,22 @@ pub async fn compression_preview(
         return Ok(None);
     };
     let act = state.activity.start_action("compression_preview");
-    let out = state.paths.cache.join("preview");
-    let result = r2dock_media::preview::compare(
-        &ff,
-        &input,
-        &out,
-        &tokio_util::sync::CancellationToken::new(),
-    )
-    .await
-    .map_err(|e| r2dock_core::AppError::internal(format!("Could not make the samples: {e}.")));
+    // A new run stops the one before it, and each run writes to its own
+    // folder so the two never touch the same files.
+    let cancel = state.compression.start_preview();
+    let root = state.paths.cache.join("preview");
+    let out = root.join(uuid::Uuid::new_v4().simple().to_string());
+    let sweep_root = root.clone();
+    let _ = tokio::task::spawn_blocking(move || sweep_previews(&sweep_root)).await;
+    let result = r2dock_media::preview::compare(&ff, &input, &out, &cancel)
+        .await
+        .map_err(|e| {
+            if e.is_cancelled() {
+                r2dock_core::AppError::new(r2dock_core::ErrorCode::Cancelled, "Cancelled.")
+            } else {
+                r2dock_core::AppError::internal(format!("Could not make the samples: {e}."))
+            }
+        });
     act.end(&result);
     let samples = result?
         .into_iter()
@@ -114,4 +121,21 @@ pub async fn compression_preview(
         })
         .collect();
     Ok(Some(samples))
+}
+
+/// Delete earlier preview runs (and samples from older versions, which were
+/// written straight into `root`). Best effort: a run that was just stopped
+/// may still hold a file, and is cleaned up next time.
+fn sweep_previews(root: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let _ = if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+    }
 }

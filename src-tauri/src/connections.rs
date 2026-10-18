@@ -192,6 +192,24 @@ impl ConnectionService {
         }
     }
 
+    /// Let finished transfers update the sidebar status too: a completed job
+    /// proves the connection works, a network failure means it is offline.
+    pub fn note_transfer(&self, job: &r2dock_transfer::JobSnapshot) {
+        use r2dock_transfer::JobState;
+        let status = match (job.state, job.error.as_ref().map(|e| e.code)) {
+            (JobState::Completed, _) => ConnectionStatus::Online,
+            (JobState::Failed, Some(ErrorCode::Network | ErrorCode::Timeout)) => {
+                ConnectionStatus::Offline
+            }
+            _ => return,
+        };
+        let mut map = self.status.lock();
+        // Never hide a credentials problem behind a network result.
+        if map.get(&job.connection_id) != Some(&ConnectionStatus::NeedsAttention) {
+            map.insert(job.connection_id, status);
+        }
+    }
+
     pub fn mark_needs_attention(&self, id: Uuid) {
         self.status
             .lock()

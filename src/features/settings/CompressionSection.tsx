@@ -99,14 +99,23 @@ function ToolsBlock({ status }: { status: CompressionStatus | undefined }) {
 
   if (!status) return <p className="secondary">Checking the compression tools...</p>;
 
-  if (progress) {
-    const pct = progress.total > 0 ? Math.floor((progress.done / progress.total) * 100) : 0;
+  // Progress lives in this component, so after leaving the page and coming
+  // back an install still running shows without numbers.
+  if (progress || status.state === "installing") {
+    const pct = progress && progress.total > 0 ? Math.floor((progress.done / progress.total) * 100) : 0;
     return (
       <div className="tools-block">
         <p>
-          Downloading compression tools: {formatBytes(progress.done)} of {formatBytes(progress.total)}
+          {progress
+            ? `Downloading compression tools: ${formatBytes(progress.done)} of ${formatBytes(progress.total)}`
+            : "Downloading compression tools..."}
         </p>
-        <ProgressBar value={progress.done} max={progress.total || 1} label={`${pct}%`} />
+        <ProgressBar
+          value={progress?.done ?? 0}
+          max={progress?.total || 1}
+          label={progress ? `${pct}%` : "Downloading"}
+          indeterminate={!progress}
+        />
         <div className="log-location-actions">
           <Button size="sm" icon={<X size={14} />} onClick={() => void compressionCancelInstall()}>
             Cancel
@@ -174,7 +183,8 @@ function ComparePreview({ ready }: { ready: boolean }) {
       const result = await compressionPreview();
       if (result) setSamples(result);
     } catch (e) {
-      toast.danger(errorMessage(e));
+      // A newer comparison stopped this one.
+      if (!(isAppError(e) && e.code === "cancelled")) toast.danger(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -211,7 +221,13 @@ function ComparePreview({ ready }: { ready: boolean }) {
 export function CompressionSection() {
   const prefs = usePreferences();
   const update = useUpdatePreferences();
-  const status = useQuery({ queryKey: qk.compression, queryFn: compressionStatus });
+  const status = useQuery({
+    queryKey: qk.compression,
+    queryFn: compressionStatus,
+    // An install started before this page was opened reports nothing here,
+    // so check until it ends.
+    refetchInterval: (q) => (q.state.data?.state === "installing" ? 1000 : false),
+  });
   const c = prefs.compression;
   const setC = (patch: Partial<CompressionPrefs>) => update({ compression: { ...c, ...patch } });
   const setAudio = (patch: Partial<AudioSettings>) => setC({ audio: { ...c.audio, ...patch } });

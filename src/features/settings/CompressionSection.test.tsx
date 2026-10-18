@@ -23,6 +23,7 @@ const ready: CompressionStatus = { ...notInstalled, state: "ready", source: "bun
 const m = vi.hoisted(() => ({
   status: vi.fn(),
   install: vi.fn(),
+  cancelInstall: vi.fn(),
   useDownloaded: vi.fn(),
   preview: vi.fn(),
   settingsSet: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock("../../ipc/commands", async (orig) => ({
   ...(await orig<typeof import("../../ipc/commands")>()),
   compressionStatus: () => m.status(),
   compressionInstall: (cb: (p: InstallProgress) => void) => m.install(cb),
+  compressionCancelInstall: () => m.cancelInstall(),
   compressionUseDownloaded: () => m.useDownloaded(),
   compressionPreview: () => m.preview(),
   settingsSet: (p: Preferences) => m.settingsSet(p),
@@ -61,6 +63,7 @@ describe("CompressionSection", () => {
   beforeEach(() => {
     m.status.mockReset();
     m.install.mockReset();
+    m.cancelInstall.mockReset();
     m.useDownloaded.mockReset();
     m.settingsSet.mockReset();
     m.settingsSet.mockImplementation((p: Preferences) => Promise.resolve(view(p)));
@@ -100,6 +103,18 @@ describe("CompressionSection", () => {
     finish!(ready);
     expect(await screen.findByText(/FFmpeg 9\.0\.2 \(LGPL 3\), downloaded and checked by R2Dock/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove tools" })).toBeInTheDocument();
+  });
+
+  it("shows an install started before the page was opened", async () => {
+    m.status.mockResolvedValueOnce({ ...notInstalled, state: "installing" }).mockResolvedValue(ready);
+    m.cancelInstall.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    setup();
+    expect(await screen.findByText("Downloading compression tools...")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Install compression tools" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(m.cancelInstall).toHaveBeenCalled();
+    expect(await screen.findByText(/downloaded and checked by R2Dock/, undefined, { timeout: 3000 })).toBeInTheDocument();
   });
 
   it("can switch from a system FFmpeg back to the download", async () => {

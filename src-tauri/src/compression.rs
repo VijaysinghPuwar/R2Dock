@@ -12,6 +12,7 @@ use r2dock_media::tools::install::{self, HttpFetch};
 use r2dock_media::tools::{Tools, ToolsError, manifest};
 use r2dock_media::video::encoders;
 use r2dock_media::video::plan::VideoEncoders;
+use r2dock_transfer::JobState;
 use r2dock_transfer::engine::MediaRuntime;
 use tokio_util::sync::CancellationToken;
 
@@ -28,6 +29,24 @@ pub struct CompressionService {
     video: RwLock<VideoEncoders>,
     problem: RwLock<Option<String>>,
     installing: Mutex<Option<CancellationToken>>,
+    /// The running "Compare quality", stopped when another one starts.
+    preview: Mutex<Option<CancellationToken>>,
+}
+
+/// Replacing or deleting FFmpeg under a running encode fails part way on
+/// Windows, so both wait until no file is being compressed.
+fn ensure_not_compressing(state: &AppState, action: &str) -> Result<(), AppError> {
+    if state
+        .engine
+        .snapshot()
+        .iter()
+        .any(|j| j.state == JobState::Compressing)
+    {
+        return Err(AppError::invalid_input(format!(
+            "Files are being compressed. Pause or cancel them, then {action} the tools."
+        )));
+    }
+    Ok(())
 }
 
 fn tools_error(e: &ToolsError) -> AppError {
@@ -54,6 +73,7 @@ impl CompressionService {
             video: RwLock::new(VideoEncoders::default()),
             problem: RwLock::new(None),
             installing: Mutex::new(None),
+            preview: Mutex::new(None),
         }
     }
 
@@ -143,6 +163,7 @@ impl CompressionService {
     ) -> Result<(), AppError> {
         let pkg = manifest::for_this_platform()
             .ok_or_else(|| tools_error(&ToolsError::UnsupportedPlatform))?;
+        ensure_not_compressing(state, "install")?;
         let token = {
             let mut slot = self.installing.lock();
             if slot.is_some() {
@@ -177,15 +198,31 @@ impl CompressionService {
     }
 
     /// Delete the downloaded tools. Blocking file removal runs off the
-    /// async runtime.
+    /// async runtime. The tools are checked again even when removal fails
+    /// part way, so a half-deleted folder is never used.
     pub async fn remove(&self, state: &AppState) -> Result<(), AppError> {
+        ensure_not_compressing(state, "remove")?;
+        if self.installing.lock().is_some() {
+            return Err(AppError::invalid_input(
+                "The tools are being installed. Cancel the install first.",
+            ));
+        }
         let root = self.tools_root.clone();
-        tokio::task::spawn_blocking(move || install::remove(&root))
+        let result = tokio::task::spawn_blocking(move || install::remove(&root))
             .await
-            .map_err(|_| AppError::internal("A background task stopped unexpectedly."))?
-            .map_err(|e| tools_error(&e))?;
+            .map_err(|_| AppError::internal("A background task stopped unexpectedly."))
+            .and_then(|r| r.map_err(|e| tools_error(&e)));
         self.refresh(state).await;
-        Ok(())
+        result
+    }
+
+    /// Start a "Compare quality" run, stopping the one before it.
+    pub fn start_preview(&self) -> CancellationToken {
+        let token = CancellationToken::new();
+        if let Some(old) = self.preview.lock().replace(token.clone()) {
+            old.cancel();
+        }
+        token
     }
 
     /// Use an FFmpeg the user picked; check it first.

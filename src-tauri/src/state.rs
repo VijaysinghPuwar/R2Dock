@@ -130,6 +130,10 @@ impl AppState {
     }
 
     pub async fn save_settings(&self) -> Result<(), AppError> {
+        // Writes go one at a time and each takes its snapshot inside the
+        // lock, so the newest settings are always the last ones on disk.
+        static WRITING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _writing = WRITING.lock().await;
         let snapshot = self.settings.read().clone();
         let path = self.settings_path();
         tokio::task::spawn_blocking(move || write_json_atomic(&path, &snapshot))

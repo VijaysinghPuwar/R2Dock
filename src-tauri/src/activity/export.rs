@@ -20,14 +20,27 @@ pub enum FileKind {
 }
 
 /// The UTC date and format of an activity file name such as
-/// `activity-2026-10-18.csv`, or `None` for any other file.
+/// `activity-2026-10-18.csv`, or `None` for any other file. Also accepts the
+/// fallback name `activity-2026-10-18-<session>.csv` used while the daily
+/// file is locked. Letter case is ignored, as it is on Windows and macOS.
 pub fn file_date(name: &str) -> Option<(NaiveDate, FileKind)> {
+    let name = name.to_ascii_lowercase();
     let rest = name.strip_prefix(FILE_PREFIX)?;
-    let (date, kind) = if let Some(d) = rest.strip_suffix(".csv") {
+    let (stem, kind) = if let Some(d) = rest.strip_suffix(".csv") {
         (d, FileKind::Csv)
     } else {
         (rest.strip_suffix(".jsonl")?, FileKind::Jsonl)
     };
+    let (date, suffix) = match stem.get(10..) {
+        Some("") => (stem, None),
+        Some(tail) => (&stem[..10], Some(tail.strip_prefix('-')?)),
+        None => return None,
+    };
+    let valid_suffix =
+        |s: &str| !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_alphanumeric());
+    if suffix.is_some_and(|s| kind != FileKind::Csv || !valid_suffix(s)) {
+        return None;
+    }
     let date = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
     Some((date, kind))
 }
@@ -195,6 +208,24 @@ mod tests {
         assert_eq!(file_date("activity-x.csv"), None);
         assert_eq!(file_date("r2dock-activity-2026-10-18.csv"), None);
         assert_eq!(file_date("activity-2026-10-18.txt"), None);
+        // Fallback files written while the daily file is locked.
+        assert_eq!(
+            file_date("activity-2026-10-18-ab12cd34.csv"),
+            Some((d, FileKind::Csv))
+        );
+        assert_eq!(file_date("activity-2026-10-18-.csv"), None);
+        assert_eq!(file_date("activity-2026-10-18-a b.csv"), None);
+        assert_eq!(file_date("activity-2026-10-18-ab12cd34.jsonl"), None);
+        assert_eq!(file_date("activity-2026-10-18x.csv"), None);
+        // Case does not matter.
+        assert_eq!(
+            file_date("Activity-2026-10-18.CSV"),
+            Some((d, FileKind::Csv))
+        );
+        assert_eq!(
+            file_date("ACTIVITY-2026-10-18.JsonL"),
+            Some((d, FileKind::Jsonl))
+        );
     }
 
     #[test]
@@ -231,6 +262,31 @@ mod tests {
         assert!(rows[1].contains(",accessDenied,This key cannot do that.,r1,"));
         assert!(rows[2].contains(",a2,"));
         assert!(rows[3].contains(",b,"));
+    }
+
+    #[test]
+    fn merges_fallback_files_into_their_day() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "activity-2026-10-02.csv",
+            &csv_file(&[
+                &row("2026-10-02T08:00:00.000Z", "a"),
+                &row("2026-10-02T10:00:00.000Z", "c"),
+            ]),
+        );
+        write(
+            dir.path(),
+            "activity-2026-10-02-ab12cd34.csv",
+            &csv_file(&[&row("2026-10-02T09:00:00.000Z", "b")]),
+        );
+        let dest = out.path().join("export.csv");
+        assert_eq!(export_csv(dir.path(), None, &dest).unwrap(), 3);
+        let rows = read_rows(&dest);
+        assert!(rows[0].contains(",a,"));
+        assert!(rows[1].contains(",b,"));
+        assert!(rows[2].contains(",c,"));
     }
 
     #[test]

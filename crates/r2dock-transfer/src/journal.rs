@@ -49,6 +49,8 @@ pub struct Journal {
     path: PathBuf,
     entries: Mutex<BTreeMap<JobId, JournalEntry>>,
     dirty: Notify,
+    /// One write at a time, so an older snapshot never lands after a newer one.
+    writing: Mutex<()>,
 }
 
 impl Journal {
@@ -63,6 +65,7 @@ impl Journal {
             path,
             entries: Mutex::new(map),
             dirty: Notify::new(),
+            writing: Mutex::new(()),
         });
         (journal, loaded)
     }
@@ -94,12 +97,18 @@ impl Journal {
 
     /// Write the journal now. Blocking.
     pub fn flush(&self) {
+        let _writing = self.writing.lock();
         let file = JournalFile {
             version: JOURNAL_VERSION,
             entries: self.entries.lock().values().cloned().collect(),
         };
-        if let Err(e) = write_json_atomic(&self.path, &file) {
-            tracing::warn!("could not save the transfer journal: {e}");
+        // On Windows an antivirus or indexer can briefly hold the file and
+        // make the replace fail; try once more before giving up.
+        if write_json_atomic(&self.path, &file).is_err() {
+            std::thread::sleep(Duration::from_millis(50));
+            if let Err(e) = write_json_atomic(&self.path, &file) {
+                tracing::warn!("could not save the transfer journal: {e}");
+            }
         }
     }
 }

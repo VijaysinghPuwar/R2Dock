@@ -105,7 +105,15 @@ export function usePlatform() {
 }
 
 export function useConnections() {
-  return useQuery({ queryKey: qk.connections, queryFn: connectionList, staleTime: 60_000 });
+  return useQuery({
+    queryKey: qk.connections,
+    queryFn: connectionList,
+    staleTime: 60_000,
+    // The core learns a connection's status from every request; poll while
+    // one is unchecked or offline so the sidebar catches up without a test.
+    refetchInterval: (query) =>
+      query.state.data?.some((c) => c.status === "unknown" || c.status === "offline") ? 5_000 : false,
+  });
 }
 
 /** The active connection, or the first one when none is flagged active. */
@@ -123,22 +131,32 @@ export function usePreferences(): Preferences {
   return useSettings().data?.preferences ?? DEFAULT_PREFERENCES;
 }
 
+/** Numbers each preference change, so only the newest one updates the cache. */
+let preferenceChanges = 0;
+
 /** Change one or more preferences. Applies immediately, then saves. */
 export function useUpdatePreferences() {
   const client = useQueryClient();
   const mutation = useMutation({
     mutationFn: (prefs: Preferences) => settingsSet(prefs),
     onMutate: async (prefs) => {
+      const change = ++preferenceChanges;
       await client.cancelQueries({ queryKey: qk.settings });
       const previous = client.getQueryData<SettingsView>(qk.settings);
       if (previous) client.setQueryData<SettingsView>(qk.settings, { ...previous, preferences: prefs });
-      return { previous };
+      return { previous, change };
     },
     onError: (err, _prefs, ctx) => {
-      if (ctx?.previous) client.setQueryData(qk.settings, ctx.previous);
       toast.danger(errorMessage(err));
+      // A newer change is on its way and carries the full preferences.
+      if (ctx?.change !== preferenceChanges) return;
+      if (ctx.previous) client.setQueryData(qk.settings, ctx.previous);
+      void client.invalidateQueries({ queryKey: qk.settings });
     },
-    onSuccess: (view) => client.setQueryData(qk.settings, view),
+    onSuccess: (view, _prefs, ctx) => {
+      // A late reply to an older change must not undo a newer one.
+      if (ctx.change === preferenceChanges) client.setQueryData(qk.settings, view);
+    },
   });
   return (patch: Partial<Preferences>) => {
     const current = client.getQueryData<SettingsView>(qk.settings)?.preferences ?? DEFAULT_PREFERENCES;
