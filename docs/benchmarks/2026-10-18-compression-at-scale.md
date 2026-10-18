@@ -55,9 +55,17 @@ Six 24.5-hour books, uplink limited to 2,000,000 bytes/s, 1 encoder (the default
 
 This run used an earlier version of the test kit's link limit (each request waited for its share of the link before its body was read, instead of reading the body at the limited rate), so the total time is approximate; the encode figures do not depend on it. These encodes were slower than the 141 s in the original report. The test machine also ran builds part of the time, so treat 193 s as an upper figure for this machine, not a comparison.
 
-Eight 6-hour books (129.6 MB each), uplink limited to 600,000 bytes/s so uploads are slower than encodes: see the next section.
+Three 1-hour books (21.6 MB each), uplink limited to 600,000 bytes/s so uploads are slower than encodes:
 
-RESULT_6H
+| Measure | Result |
+|---|---|
+| Each encode, 21.6 MB to 14.4 MB (mp3-32k) | 8.2 s |
+| Total for 3 books | 80.3 s |
+| Peak copies in the work folder | 3 (43.2 MB), within the bound of upload slots plus encoders |
+| FFmpeg processes at once | 1, about 124% CPU while encoding |
+| Activity log rows | 9 for 3 uploads |
+
+A longer run (eight 6-hour books) stopped making progress. The cause was a deadlock in the new queue log, not in the scheduler: when an append to `queue.log` failed (the `transfers` folder did not exist yet in a fresh data folder), the writer fell back to a full snapshot while still holding its own write lock. Appends now create the folder, the fallback releases the lock first, and two tests cover both cases (one fails within 10 s without the fix).
 
 ## Restart with many compressed copies
 

@@ -264,10 +264,15 @@ impl Journal {
                 bytes.push(b'\n');
             }
         }
-        let appended = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log)
+        let appended = log
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log)
+            })
             .and_then(|mut f| {
                 f.write_all(&bytes)?;
                 f.sync_data()
@@ -279,8 +284,10 @@ impl Journal {
                 self.written.fetch_add(n, Ordering::Relaxed);
             }
             Err(e) => {
-                // Write everything as a new snapshot instead.
+                // Write everything as a new snapshot instead. `compact`
+                // takes the write lock itself.
                 tracing::warn!("could not append to the transfer queue log: {e}");
+                drop(_writing);
                 self.compact();
             }
         }
@@ -406,6 +413,38 @@ mod tests {
         drop(j2);
         let (_, again) = logged(dir.path());
         assert_eq!(again.len(), 50);
+    }
+
+    #[test]
+    fn logged_journal_starts_in_a_missing_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("transfers");
+        let (j, _) = logged(&folder);
+        let e = entry();
+        j.upsert(e.clone());
+        j.flush();
+        let (_, loaded) = logged(&folder);
+        assert_eq!(loaded, vec![e]);
+    }
+
+    #[test]
+    fn a_failed_append_writes_a_snapshot_without_hanging() {
+        let dir = tempfile::tempdir().unwrap();
+        // A folder where the log should be: every append fails.
+        std::fs::create_dir(dir.path().join("queue.log")).unwrap();
+        let (j, _) = logged(dir.path());
+        let e = entry();
+        j.upsert(e.clone());
+        let (done, wait) = std::sync::mpsc::channel();
+        let flushing = j.clone();
+        std::thread::spawn(move || {
+            flushing.flush();
+            let _ = done.send(());
+        });
+        wait.recv_timeout(Duration::from_secs(10))
+            .expect("flush finishes");
+        let (_, loaded) = logged(dir.path());
+        assert_eq!(loaded, vec![e], "the snapshot holds the change");
     }
 
     #[test]
