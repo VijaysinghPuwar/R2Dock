@@ -14,7 +14,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -79,6 +79,34 @@ struct Entry {
     meter: Option<SpeedMeter>,
     started: Option<Instant>,
     last_sent: u64,
+    /// Order the job was added in, kept across restarts.
+    seq: u64,
+}
+
+impl Entry {
+    /// The accepted job as saved in the queue file (no resume data).
+    fn intent(&self) -> JournalEntry {
+        JournalEntry {
+            id: self.snap.id,
+            spec: self.spec.clone(),
+            group: self.snap.group.clone(),
+            resume: ResumeState::None,
+            created_at: self.snap.created_at.clone(),
+            seq: self.seq,
+        }
+    }
+}
+
+/// How often the resume journal and the queue file are saved at most.
+const JOURNAL_BATCH: Duration = Duration::from_millis(200);
+const QUEUE_BATCH: Duration = Duration::from_secs(1);
+
+/// States after which a job is no longer kept for a restart.
+fn is_finished(state: JobState) -> bool {
+    matches!(
+        state,
+        JobState::Completed | JobState::Cancelled | JobState::Skipped | JobState::Failed
+    )
 }
 
 #[derive(Default)]
@@ -99,7 +127,11 @@ struct Inner {
     concurrency: AtomicUsize,
     threshold: Mutex<u64>,
     slow_until: Mutex<Option<Instant>>,
+    /// Resumable state (parts, partial files, compressed copies).
     journal: Arc<Journal>,
+    /// Every accepted job that has not finished, so none is lost on a restart.
+    queue: Arc<Journal>,
+    next_seq: AtomicU64,
     history: Arc<History>,
     config: EngineConfig,
     media: RwLock<Option<MediaRuntime>>,
@@ -121,7 +153,9 @@ impl Engine {
     pub fn start(provider: Arc<dyn ClientProvider>, config: EngineConfig) -> Self {
         let transfers = config.data_dir.join("transfers");
         let (journal, recovered) = Journal::load(transfers.join("journal.json"));
-        journal.spawn_writer();
+        journal.spawn_writer(JOURNAL_BATCH);
+        let (queue, accepted) = Journal::load(transfers.join("queue.json"));
+        queue.spawn_writer(QUEUE_BATCH);
         let history = Arc::new(History::new(transfers.join("history.jsonl")));
         let inner = Arc::new(Inner {
             jobs: Mutex::new(Jobs::default()),
@@ -135,24 +169,47 @@ impl Engine {
             threshold: Mutex::new(config.multipart_threshold),
             slow_until: Mutex::new(None),
             journal,
+            queue,
+            next_seq: AtomicU64::new(1),
             history,
             config,
             media: RwLock::new(None),
             compression_observer: RwLock::new(None),
         });
         let engine = Self { inner };
-        engine.restore(recovered);
+        engine.restore(recovered, accepted);
         tokio::spawn(scheduler(engine.inner.clone()));
         tokio::spawn(progress_ticker(engine.inner.clone()));
         engine
     }
 
-    fn restore(&self, recovered: Vec<JournalEntry>) {
+    /// Bring back saved jobs as `Interrupted`, for the user to resume or
+    /// discard. Nothing restarts on its own. Resumable state wins over the
+    /// plain accepted job; older versions wrote only the resumable state.
+    fn restore(&self, recovered: Vec<JournalEntry>, accepted: Vec<JournalEntry>) {
+        let mut merged: HashMap<JobId, JournalEntry> =
+            accepted.into_iter().map(|e| (e.id, e)).collect();
+        for mut e in recovered {
+            if let Some(intent) = merged.get(&e.id)
+                && e.seq == 0
+            {
+                e.seq = intent.seq;
+            }
+            merged.insert(e.id, e);
+        }
+        let mut recovered: Vec<JournalEntry> = merged.into_values().collect();
+        recovered.sort_by(|a, b| (a.seq, &a.created_at).cmp(&(b.seq, &b.created_at)));
+        let max_seq = recovered.iter().map(|e| e.seq).max().unwrap_or(0);
+        self.inner.next_seq.store(max_seq + 1, Ordering::Relaxed);
+
+        let mut intents = Vec::with_capacity(recovered.len());
         let mut jobs = self.inner.jobs.lock();
         for mut e in recovered {
-            // A compressed copy that is gone means compressing again.
+            // A compressed copy that is gone, or saved without a digest by an
+            // older version, means compressing again.
             if let JobSpec::Upload(u) = &mut e.spec
-                && u.compressed_copy().is_some_and(|c| !c.temp.is_file())
+                && u.compressed_copy()
+                    .is_some_and(|c| c.output.is_none() || !c.temp.is_file())
             {
                 compress::restore_original(u);
             }
@@ -174,20 +231,22 @@ impl Engine {
             }
             snap.transferred_bytes = counter.total();
             jobs.order.push(e.id);
-            jobs.map.insert(
-                e.id,
-                Entry {
-                    snap,
-                    spec: e.spec,
-                    resume: Arc::new(Mutex::new(e.resume)),
-                    counter,
-                    control: None,
-                    meter: None,
-                    started: None,
-                    last_sent: 0,
-                },
-            );
+            let entry = Entry {
+                snap,
+                spec: e.spec,
+                resume: Arc::new(Mutex::new(e.resume)),
+                counter,
+                control: None,
+                meter: None,
+                started: None,
+                last_sent: 0,
+                seq: e.seq,
+            };
+            intents.push(entry.intent());
+            jobs.map.insert(e.id, entry);
         }
+        drop(jobs);
+        self.inner.queue.upsert_many(intents);
     }
 
     /// Set (or replace) the event sink and send a full snapshot.
@@ -246,6 +305,7 @@ impl Engine {
     pub fn enqueue(&self, specs: Vec<JobSpec>, group: Option<GroupInfo>) -> Vec<JobId> {
         let mut added = Vec::with_capacity(specs.len());
         let mut ids = Vec::with_capacity(specs.len());
+        let mut intents = Vec::with_capacity(specs.len());
         {
             let mut jobs = self.inner.jobs.lock();
             for spec in specs {
@@ -254,22 +314,24 @@ impl Engine {
                 added.push(snap.clone());
                 jobs.order.push(id);
                 jobs.queue.push_back(id);
-                jobs.map.insert(
-                    id,
-                    Entry {
-                        snap,
-                        spec,
-                        resume: Arc::new(Mutex::new(ResumeState::None)),
-                        counter: Arc::new(Counter::default()),
-                        control: None,
-                        meter: None,
-                        started: None,
-                        last_sent: 0,
-                    },
-                );
+                let entry = Entry {
+                    snap,
+                    spec,
+                    resume: Arc::new(Mutex::new(ResumeState::None)),
+                    counter: Arc::new(Counter::default()),
+                    control: None,
+                    meter: None,
+                    started: None,
+                    last_sent: 0,
+                    seq: self.inner.next_seq.fetch_add(1, Ordering::Relaxed),
+                };
+                intents.push(entry.intent());
+                jobs.map.insert(id, entry);
                 ids.push(id);
             }
         }
+        // Saved before anything runs, so accepted work survives a restart.
+        self.inner.queue.upsert_many(intents);
         // Large batches are sent in chunks to keep IPC messages small.
         for chunk in added.chunks(500) {
             self.inner.emit(TransferEvent::Added {
@@ -354,9 +416,11 @@ impl Engine {
         );
     }
 
-    /// Persist resumable state now (call before the app exits). Blocking.
+    /// Persist resumable state and the queue now (call before the app
+    /// exits). Blocking.
     pub fn flush(&self) {
         self.inner.journal.flush();
+        self.inner.queue.flush();
     }
 
     /// Final file of a completed download.
@@ -472,6 +536,9 @@ impl Inner {
             }
             jobs.map.get(&id).map(|e| e.snap.clone())
         };
+        if is_finished(state) {
+            self.queue.remove(id);
+        }
         if let Some(job) = snap {
             if state.is_active() {
                 self.progress_wake.notify_one();
@@ -574,6 +641,8 @@ impl Inner {
         enum Then {
             Nothing,
             Emit(Box<JobSnapshot>),
+            /// Emit, and save the job again (it is back in the queue or changed).
+            Saved(Box<JobSnapshot>, Box<JournalEntry>),
             Cancelled,
             Removed(ResumeState, Uuid, String),
         }
@@ -595,7 +664,7 @@ impl Inner {
                 if !queue.contains(&id) {
                     queue.push_back(id);
                 }
-                Then::Emit(Box::new(e.snap.clone()))
+                Box::new(e.snap.clone())
             };
             match action {
                 JobAction::Pause => {
@@ -626,7 +695,7 @@ impl Inner {
                     if !matches!(state, JobState::Paused | JobState::Interrupted) {
                         return Err(not_applicable());
                     }
-                    requeue(e, queue)
+                    Then::Emit(requeue(e, queue))
                 }
                 JobAction::Retry => {
                     if !matches!(
@@ -643,14 +712,16 @@ impl Inner {
                         u.compressed = None;
                         e.snap.compression = CompressionView::of(u);
                     }
-                    requeue(e, queue)
+                    let snap = requeue(e, queue);
+                    Then::Saved(snap, Box::new(e.intent()))
                 }
                 JobAction::Resolve(policy) => {
                     if state != JobState::NeedsDecision {
                         return Err(not_applicable());
                     }
                     e.spec.set_policy(policy);
-                    requeue(e, queue)
+                    let snap = requeue(e, queue);
+                    Then::Saved(snap, Box::new(e.intent()))
                 }
                 JobAction::Cancel => {
                     if state.is_terminal() {
@@ -695,12 +766,18 @@ impl Inner {
                 self.emit(TransferEvent::Updated { job });
                 self.wake.notify_one();
             }
+            Then::Saved(job, intent) => {
+                self.queue.upsert(*intent);
+                self.emit(TransferEvent::Updated { job });
+                self.wake.notify_one();
+            }
             Then::Cancelled => {
                 self.discard_partial(id);
                 self.finish(id, JobState::Cancelled, None);
             }
             Then::Removed(resume, conn, bucket) => {
                 self.journal.remove(id);
+                self.queue.remove(id);
                 self.discard_resume(resume, conn, bucket);
                 self.emit(TransferEvent::Removed { ids: vec![id] });
             }
@@ -830,8 +907,10 @@ impl JobHooks for Hooks {
                 ),
             };
             e.snap.local_display = self.0.local_display(&e.spec);
-            e.snap.clone()
+            (e.snap.clone(), e.intent())
         };
+        let (snap, intent) = snap;
+        self.0.queue.upsert(intent);
         self.0.emit(TransferEvent::Updated {
             job: Box::new(snap),
         });
@@ -863,6 +942,7 @@ impl JobHooks for Hooks {
                     group: e.snap.group.clone(),
                     resume,
                     created_at: e.snap.created_at.clone(),
+                    seq: e.seq,
                 })
             }
         };
@@ -941,7 +1021,9 @@ async fn progress_ticker(inner: Arc<Inner>) {
 }
 
 async fn run_job(inner: Arc<Inner>, id: JobId, control: Arc<RunControl>) {
-    // A compressed copy is used only while its original is unchanged.
+    // A compressed copy is used only while its original is unchanged and
+    // the copy is still the exact file that passed verification; otherwise
+    // it is compressed again (or the original is uploaded, per policy).
     let copy = {
         let jobs = inner.jobs.lock();
         jobs.map.get(&id).and_then(|e| match &e.spec {
@@ -950,11 +1032,12 @@ async fn run_job(inner: Arc<Inner>, id: JobId, control: Arc<RunControl>) {
         })
     };
     if let Some(copy) = copy {
-        let changed = tokio::task::spawn_blocking(move || compress::original_changed(&copy))
+        let changed = tokio::task::spawn_blocking(move || compress::copy_unusable(&copy))
             .await
             .unwrap_or(true);
         if changed {
             inner.drop_compressed(id, true);
+            Hooks(inner.clone()).checkpoint(id);
             if let Some(e) = inner.jobs.lock().map.get_mut(&id)
                 && e.control.as_ref().is_some_and(|c| Arc::ptr_eq(c, &control))
             {

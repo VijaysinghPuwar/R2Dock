@@ -14,6 +14,7 @@ use tokio::io::AsyncWriteExt;
 use crate::ctx::{DownloadState, JobCtx, Outcome, ResumeState, Stop};
 use crate::model::{DownloadSpec, JobState};
 use crate::retry::JobError;
+use crate::source::WrittenFile;
 
 const KEEP_BOTH_LIMIT: u32 = 1000;
 
@@ -140,27 +141,47 @@ pub async fn run(ctx: &JobCtx, spec: &mut DownloadSpec) -> Result<Outcome, JobEr
         }
         other => other,
     };
-    let (final_path, mut etag, mut offset) = match saved {
+    let resumed = match saved {
         ResumeState::Download(DownloadState {
             etag,
             temp,
             final_path,
-        }) => {
-            let temp_meta = std::fs::symlink_metadata(&temp).ok();
-            // The partial is saved only after the temp file exists, so a
-            // missing temp beside a full-size final file means the app
-            // stopped right after moving it into place.
-            if temp_meta.is_none()
-                && std::fs::symlink_metadata(&final_path)
-                    .is_ok_and(|m| m.is_file() && m.len() == spec.size)
-            {
-                ctx.clear_resume();
-                return Ok(Outcome::Completed);
+            finalized,
+        }) => match std::fs::symlink_metadata(&temp).ok() {
+            Some(meta) => {
+                let len = if meta.is_file() { meta.len() } else { 0 };
+                Some((final_path, etag, len.saturating_sub(RESUME_BACKOFF)))
             }
-            let len = temp_meta.filter(|m| m.is_file()).map_or(0, |m| m.len());
-            (final_path, etag, len.saturating_sub(RESUME_BACKOFF))
-        }
-        _ => {
+            None => {
+                // The partial is gone. Only the finalization record proves
+                // that the app stopped right after moving it into place; a
+                // file of the right size alone could be anything.
+                if let Some(proof) = finalized {
+                    let fp = final_path.clone();
+                    let found = blocking(move || Ok(find_finalized(&proof, &fp))).await?;
+                    if let Some(path) = found {
+                        if path != final_path
+                            && let (Some(name), Some(parent)) =
+                                (path.file_name(), spec.rel_path.parent())
+                        {
+                            spec.rel_path = parent.join(name);
+                            ctx.hooks.renamed(ctx.id, None, Some(spec.rel_path.clone()));
+                        }
+                        ctx.clear_resume();
+                        return Ok(Outcome::Completed);
+                    }
+                }
+                // No proof: start over, applying the conflict policy again
+                // so an existing file is never replaced without permission.
+                ctx.clear_resume();
+                None
+            }
+        },
+        _ => None,
+    };
+    let (final_path, mut etag, mut offset) = match resumed {
+        Some(r) => r,
+        None => {
             let before = spec.rel_path.clone();
             let mut working = spec.clone();
             let resolved = blocking(move || {
@@ -268,6 +289,7 @@ pub async fn run(ctx: &JobCtx, spec: &mut DownloadSpec) -> Result<Outcome, JobEr
         etag: remote_etag.clone(),
         temp: temp.clone(),
         final_path: final_path.clone(),
+        finalized: None,
     }));
     ctx.counter.reset_in_flight();
     ctx.counter.set_committed(offset);
@@ -337,6 +359,21 @@ pub async fn run(ctx: &JobCtx, spec: &mut DownloadSpec) -> Result<Outcome, JobEr
     if ctx.control.stop() != Stop::None {
         return stopped(ctx, &temp);
     }
+    // Record the finished, synced file before moving it, so recovery can
+    // tell this file from any other one at the destination.
+    let check = temp.clone();
+    let written = blocking(move || {
+        std::fs::symlink_metadata(&check)
+            .map(|m| WrittenFile::of(&m))
+            .map_err(|e| JobError::io(&e, "save the download"))
+    })
+    .await?;
+    ctx.save_resume(ResumeState::Download(DownloadState {
+        etag: remote_etag.clone(),
+        temp: temp.clone(),
+        final_path: final_path.clone(),
+        finalized: Some(written),
+    }));
     let policy = spec.policy;
     let temp_c = temp.clone();
     let final_c = final_path.clone();
@@ -422,6 +459,27 @@ fn md5_file(path: &Path) -> Result<String, JobError> {
         h.update(&buf[..n]);
     }
     Ok(hex::encode(h.finalize()))
+}
+
+/// Where a finished download was moved to, if it is still there: the
+/// target, or a "Keep both" name beside it. Only a file matching the
+/// finalization record counts. Blocking.
+fn find_finalized(proof: &WrittenFile, target: &Path) -> Option<PathBuf> {
+    if proof.matches(target) {
+        return Some(target.to_path_buf());
+    }
+    let dir = target.parent()?;
+    let name = target.file_name()?.to_string_lossy().into_owned();
+    for n in 1..=KEEP_BOTH_LIMIT {
+        let candidate = dir.join(r2dock_core::keys::keep_both_name(&name, n));
+        if !exists_no_follow(&candidate) {
+            return None;
+        }
+        if proof.matches(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 enum Placed {

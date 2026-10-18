@@ -571,6 +571,138 @@ async fn restart_reuses_the_copy_and_edits_compress_again() {
     assert_eq!(started(&h2.events), 2, "compressed again after the edit");
 }
 
+/// Hold a compressed upload at a conflict (policy Ask) and return the path
+/// and bytes of its copy.
+async fn held_copy(h: &Harness, bin: &Path, key: &str) -> (JobId, PathBuf, Vec<u8>) {
+    held_copy_with(h, bin, key, CompressionFailure::UploadOriginal).await
+}
+
+async fn held_copy_with(
+    h: &Harness,
+    bin: &Path,
+    key: &str,
+    on_failure: CompressionFailure,
+) -> (JobId, PathBuf, Vec<u8>) {
+    h.client
+        .sdk()
+        .put_object()
+        .bucket(BUCKET)
+        .key(key)
+        .body(b"old".to_vec().into())
+        .send()
+        .await
+        .unwrap();
+    let input = h.files.path().join(key);
+    speech_mp3(bin, &input, 150);
+    let ids = h.engine.enqueue(
+        vec![upload(input, key, ConflictPolicy::Ask, on_failure)],
+        None,
+    );
+    wait_state(&h.engine, ids[0], &[JobState::NeedsDecision]).await;
+    let names = work_files(&h.work);
+    assert_eq!(names.len(), 1);
+    let copy = h.work.join(&names[0]);
+    let bytes = std::fs::read(&copy).unwrap();
+    (ids[0], copy, bytes)
+}
+
+/// A copy that changed after it was checked (replaced by other bytes,
+/// altered without changing its size, or altered with its modification time
+/// put back) is never uploaded: it is compressed again from the unchanged
+/// original. The job never fails because of it, even with "Skip file".
+#[tokio::test(flavor = "multi_thread")]
+async fn a_changed_copy_is_compressed_again() {
+    let Some(bin) = ffmpeg_bin() else { return };
+    for (case, on_failure) in [
+        ("replaced", CompressionFailure::UploadOriginal),
+        ("same size", CompressionFailure::UploadOriginal),
+        ("same size and time", CompressionFailure::SkipFile),
+    ] {
+        let h = harness_with(Some(bin.clone()), None, None).await;
+        let states = Arc::new(Mutex::new(Vec::new()));
+        let sink = states.clone();
+        h.engine.subscribe(Arc::new(move |e| {
+            if let r2dock_transfer::TransferEvent::Updated { job } = e {
+                sink.lock().push(job.state);
+            }
+        }));
+        let (id, copy, valid) = held_copy_with(&h, &bin, "talk.mp3", on_failure).await;
+        let mtime = std::fs::metadata(&copy).unwrap().modified().unwrap();
+        let broken = if case == "replaced" {
+            b"BROKEN MEDIA".to_vec()
+        } else {
+            let mut b = valid.clone();
+            let mid = b.len() / 2;
+            b[mid] ^= 0xFF;
+            b
+        };
+        std::fs::write(&copy, &broken).unwrap();
+        if case == "same size and time" {
+            let f = std::fs::OpenOptions::new().write(true).open(&copy).unwrap();
+            f.set_modified(mtime).unwrap();
+        }
+        h.engine
+            .control(id, JobAction::Resolve(ConflictPolicy::Replace))
+            .unwrap();
+        let j = wait_state(&h.engine, id, &[JobState::Completed, JobState::Failed]).await;
+        assert_eq!(j.state, JobState::Completed, "{case}: {:?}", j.error);
+        assert!(
+            !states.lock().contains(&JobState::Failed),
+            "{case}: never failed"
+        );
+        let uploaded = object(&h.client, "talk.mp3").await;
+        assert_ne!(uploaded, broken, "{case}");
+        assert_eq!(uploaded, valid, "{case}");
+        assert_eq!(started(&h.events), 2, "{case}: compressed again");
+    }
+}
+
+/// A copy saved by an older version has no digest; after a restart it is
+/// compressed again instead of being trusted.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_copy_without_a_digest_is_compressed_again() {
+    let Some(bin) = ffmpeg_bin() else { return };
+    let h = harness_with(Some(bin.clone()), None, None).await;
+    let (id, _copy, valid) = held_copy(&h, &bin, "book.mp3").await;
+    h.engine.flush();
+    let Harness {
+        _s3: s3,
+        engine,
+        data,
+        files,
+        ..
+    } = h;
+    drop(engine);
+    // Remove the digest, as an older version would have written it.
+    let path = data.path().join("transfers").join("journal.json");
+    let mut journal: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let copy = &mut journal["entries"][0]["spec"]["compressed"];
+    assert!(copy.get("output").is_some(), "the digest is saved");
+    copy.as_object_mut().unwrap().remove("output");
+    std::fs::write(&path, serde_json::to_vec(&journal).unwrap()).unwrap();
+
+    let h2 = harness_with(Some(bin.clone()), Some(data), Some(s3)).await;
+    let j = wait_state(&h2.engine, id, &[JobState::Interrupted]).await;
+    assert!(matches!(
+        j.compression,
+        Some(CompressionView::Pending { .. })
+    ));
+    h2.engine
+        .control(id, JobAction::Resolve(ConflictPolicy::Replace))
+        .unwrap_err();
+    h2.engine.control(id, JobAction::Resume).unwrap();
+    wait_state(&h2.engine, id, &[JobState::NeedsDecision]).await;
+    h2.engine
+        .control(id, JobAction::Resolve(ConflictPolicy::Replace))
+        .unwrap();
+    let j = wait_state(&h2.engine, id, &[JobState::Completed, JobState::Failed]).await;
+    assert_eq!(j.state, JobState::Completed, "{:?}", j.error);
+    assert_eq!(started(&h2.events), 1, "compressed again");
+    assert_eq!(object(&h2.client, "book.mp3").await, valid);
+    drop(files);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn video_upload_becomes_av1_mp4() {
     let Some(bin) = ffmpeg_bin() else { return };

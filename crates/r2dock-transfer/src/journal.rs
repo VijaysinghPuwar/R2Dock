@@ -1,5 +1,10 @@
-//! On-disk journal of resumable work (multipart uploads and partial
-//! downloads) so it can continue after a restart (PLAN.md 13).
+//! On-disk journal of transfers so they come back after a restart
+//! (PLAN.md 13).
+//!
+//! The engine keeps two of these files: `journal.json` holds resumable
+//! state (multipart uploads, partial downloads, compressed copies) and
+//! changes often; `queue.json` holds every accepted job that has not
+//! finished, and changes only when jobs are added, finish, or are edited.
 //!
 //! Updates are batched and written by a background task with atomic file
 //! replacement, so the async runtime never blocks on disk writes.
@@ -27,6 +32,9 @@ pub struct JournalEntry {
     pub group: Option<GroupInfo>,
     pub resume: ResumeState,
     pub created_at: String,
+    /// Order the job was added in (0 in older journals).
+    #[serde(default)]
+    pub seq: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,14 +78,15 @@ impl Journal {
         (journal, loaded)
     }
 
-    /// Start the background writer. Must be called inside a Tokio runtime.
-    pub fn spawn_writer(self: &Arc<Self>) {
+    /// Start the background writer, which saves at most once per `batch`.
+    /// Must be called inside a Tokio runtime.
+    pub fn spawn_writer(self: &Arc<Self>, batch: Duration) {
         let this = Arc::clone(self);
         tokio::spawn(async move {
             loop {
                 this.dirty.notified().await;
                 // Batch bursts of updates (one per finished part).
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                tokio::time::sleep(batch).await;
                 let me = Arc::clone(&this);
                 let _ = tokio::task::spawn_blocking(move || me.flush()).await;
             }
@@ -87,6 +96,20 @@ impl Journal {
     pub fn upsert(&self, entry: JournalEntry) {
         self.entries.lock().insert(entry.id, entry);
         self.dirty.notify_one();
+    }
+
+    /// Add or replace many entries with one save.
+    pub fn upsert_many(&self, entries: impl IntoIterator<Item = JournalEntry>) {
+        let mut map = self.entries.lock();
+        let mut any = false;
+        for e in entries {
+            map.insert(e.id, e);
+            any = true;
+        }
+        drop(map);
+        if any {
+            self.dirty.notify_one();
+        }
     }
 
     pub fn remove(&self, id: JobId) {
@@ -137,8 +160,10 @@ mod tests {
                 etag: Some("\"abc\"".into()),
                 temp: PathBuf::from("/tmp/.k.r2dock-part"),
                 final_path: PathBuf::from("/tmp/k"),
+                finalized: None,
             }),
             created_at: "2026-10-17T00:00:00Z".into(),
+            seq: 0,
         }
     }
 
@@ -191,6 +216,17 @@ mod tests {
                     original_size: 20,
                     original: fingerprint,
                     preset: "mp3-32k".into(),
+                    output: Some(crate::model::CopyDigest {
+                        file: crate::source::WrittenFile {
+                            len: 10,
+                            mtime_ns: 1_792_272_545_142_633_478,
+                            identity: Some(crate::source::FileIdentity {
+                                dev: u64::MAX,
+                                ino: 7,
+                            }),
+                        },
+                        sha256: "ab".repeat(32),
+                    }),
                 })),
             }),
             group: None,
@@ -210,6 +246,7 @@ mod tests {
                 .into(),
             }),
             created_at: "2026-10-17T00:00:00Z".into(),
+            seq: 0,
         };
         j.upsert(e.clone());
         j.flush();

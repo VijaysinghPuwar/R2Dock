@@ -20,10 +20,10 @@ use r2dock_media::pipeline::{self, PrepareJob, Prepared, Unchanged};
 use super::Inner;
 use crate::ctx::{JobHooks, RunControl, Stop};
 use crate::model::{
-    CompressedCopy, CompressionFailure, CompressionResult, CompressionView, JobId, JobSpec,
-    JobState, TransferEvent, UploadSpec,
+    CompressedCopy, CompressionFailure, CompressionResult, CompressionView, CopyDigest, JobId,
+    JobSpec, JobState, TransferEvent, UploadSpec,
 };
-use crate::source::SourceFile;
+use crate::source::{SourceFile, digest_written};
 
 /// How often compression progress is sent.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
@@ -239,17 +239,30 @@ pub(super) fn restore_original(u: &mut UploadSpec) {
         u.local = c.original_local;
         u.key = c.original_key;
         u.size = c.original_size;
+        // The identity was the copy's; the original's was not kept.
+        u.identity = None;
     }
     u.compressed = None;
 }
 
-/// Whether the original of a compressed copy changed since it was
-/// compressed. Blocking.
-pub(super) fn original_changed(c: &CompressedCopy) -> bool {
-    match SourceFile::open(&c.original_local, None) {
-        Ok(s) => s.fingerprint != c.original || !c.temp.is_file(),
-        Err(_) => true,
+/// Whether a compressed copy can no longer be uploaded: its original
+/// changed since it was compressed, or the copy is not the exact file that
+/// passed verification (missing, replaced, truncated, or altered, even
+/// without a size change). A copy saved without a digest is not trusted.
+/// Blocking: reads the whole copy.
+pub(super) fn copy_unusable(c: &CompressedCopy) -> bool {
+    let original_ok =
+        SourceFile::open(&c.original_local, None).is_ok_and(|s| s.fingerprint == c.original);
+    if !original_ok {
+        return true;
     }
+    let Some(want) = &c.output else {
+        return true;
+    };
+    if !want.file.matches(&c.temp) {
+        return true;
+    }
+    !digest_written(&c.temp).is_ok_and(|(file, sha256)| file == want.file && sha256 == want.sha256)
 }
 
 fn failure_error(message: &str) -> AppError {
@@ -259,6 +272,51 @@ fn failure_error(message: &str) -> AppError {
     )
 }
 
+/// How a compression run ended, for [`compress_job`]'s single exit path.
+enum End {
+    /// The job reached its own state (failed, cancelled, paused).
+    Settled,
+    /// Back to the upload queue, with or without a copy.
+    Upload,
+}
+
+/// Runs on every exit of [`compress_job`], including a panic: releases the
+/// run's control (only if no newer run replaced it) and wakes the
+/// scheduler, so the next job can take the encode slot. A job still shown
+/// as compressing at that point ended abnormally and is marked failed.
+struct Finalize {
+    inner: Arc<Inner>,
+    id: JobId,
+    control: Arc<RunControl>,
+}
+
+impl Drop for Finalize {
+    fn drop(&mut self) {
+        let stuck = {
+            let mut jobs = self.inner.jobs.lock();
+            match jobs.map.get_mut(&self.id) {
+                Some(e)
+                    if e.control
+                        .as_ref()
+                        .is_some_and(|c| Arc::ptr_eq(c, &self.control)) =>
+                {
+                    e.control = None;
+                    e.snap.state == JobState::Compressing
+                }
+                _ => false,
+            }
+        };
+        if stuck {
+            self.inner.finish(
+                self.id,
+                JobState::Failed,
+                Some(failure_error("a background task stopped")),
+            );
+        }
+        self.inner.wake.notify_one();
+    }
+}
+
 async fn compress_job(
     inner: Arc<Inner>,
     id: JobId,
@@ -266,9 +324,28 @@ async fn compress_job(
     spec: UploadSpec,
     media: MediaRuntime,
 ) {
+    let _finalize = Finalize {
+        inner: inner.clone(),
+        id,
+        control: control.clone(),
+    };
+    if let End::Upload = compress(&inner, id, &control, spec, media).await {
+        clear_control(&inner, id, &control);
+        super::Hooks(inner.clone()).checkpoint(id);
+        inner.requeue_front(id);
+    }
+}
+
+async fn compress(
+    inner: &Arc<Inner>,
+    id: JobId,
+    control: &Arc<RunControl>,
+    spec: UploadSpec,
+    media: MediaRuntime,
+) -> End {
     let started = Instant::now();
     let Some(request) = spec.compression.clone() else {
-        return;
+        return End::Upload;
     };
     inner.observe(CompressionEvent::Started {
         id,
@@ -298,7 +375,7 @@ async fn compress_job(
     // A file that changes while it is compressed is compressed again, a
     // limited number of times; one that keeps changing counts as a failure.
     let mut attempts = 0;
-    let (result, fingerprint) = loop {
+    let (result, fingerprint, digest) = loop {
         // Open the original the safe way (no symlinks, same file as scanned).
         let local = spec.local.clone();
         let identity = spec.identity;
@@ -307,7 +384,7 @@ async fn compress_job(
             Ok(Ok(s)) => s,
             Ok(Err(e)) => {
                 inner.finish(id, JobState::Failed, Some(e.app));
-                return;
+                return End::Settled;
             }
             Err(_) => {
                 inner.finish(
@@ -315,7 +392,7 @@ async fn compress_job(
                     JobState::Failed,
                     Some(failure_error("a background task stopped")),
                 );
-                return;
+                return End::Settled;
             }
         };
         let fingerprint = source.fingerprint;
@@ -334,14 +411,36 @@ async fn compress_job(
         )
         .await;
         let Ok(Prepared::Compressed(c)) = &result else {
-            break (result, fingerprint);
+            break (result, fingerprint, None);
         };
-        // The original must not have changed while it was compressed.
-        let unchanged = tokio::task::spawn_blocking(move || source.ensure_unchanged().is_ok())
-            .await
-            .unwrap_or(false);
-        if unchanged {
-            break (result, fingerprint);
+        // The original must not have changed while it was compressed, and
+        // the verified copy is recorded exactly (size, identity, SHA-256)
+        // so a later change to it is noticed before upload.
+        let output = c.output.clone();
+        let checked = tokio::task::spawn_blocking(move || {
+            source
+                .ensure_unchanged()
+                .ok()
+                .map(|()| digest_written(&output))
+        })
+        .await
+        .ok()
+        .flatten();
+        match checked {
+            Some(Ok((file, sha256))) if file.len == c.size => {
+                break (result, fingerprint, Some(CopyDigest { file, sha256 }));
+            }
+            Some(_) => {
+                let _ = std::fs::remove_file(&c.output);
+                break (
+                    Err(EncodeError::Failed(
+                        "the compressed copy could not be checked".into(),
+                    )),
+                    fingerprint,
+                    None,
+                );
+            }
+            None => {}
         }
         let _ = std::fs::remove_file(&c.output);
         attempts += 1;
@@ -349,6 +448,7 @@ async fn compress_job(
             break (
                 Err(EncodeError::Failed("the file is still changing".into())),
                 fingerprint,
+                None,
             );
         }
     };
@@ -356,6 +456,7 @@ async fn compress_job(
     match result {
         Ok(Prepared::Compressed(c)) => {
             let key = pipeline::upload_key(&spec.key, &c);
+            let identity = digest.as_ref().and_then(|d| d.file.identity);
             let copy = CompressedCopy {
                 temp: c.output.clone(),
                 original_local: spec.local.clone(),
@@ -363,12 +464,14 @@ async fn compress_job(
                 original_size: c.original_size,
                 original: fingerprint,
                 preset: c.preset.clone(),
+                output: digest,
             };
             inner.set_result(id, |u| {
                 u.local = c.output.clone();
                 u.key = key.clone();
                 u.size = c.size;
-                u.identity = None;
+                // The upload opens only this exact copy.
+                u.identity = identity;
                 u.compressed = Some(CompressionResult::Compressed(copy));
             });
             inner.observe(CompressionEvent::Finished {
@@ -379,6 +482,7 @@ async fn compress_job(
                 preset: c.preset,
                 secs: started.elapsed().as_secs_f64(),
             });
+            End::Upload
         }
         Ok(Prepared::Unchanged(reason)) => {
             inner.set_result(id, |u| {
@@ -391,21 +495,15 @@ async fn compress_job(
                 key: spec.key.clone(),
                 reason,
             });
+            End::Upload
         }
         Err(e) if e.is_cancelled() => {
+            inner.set_result(id, |_| {});
             match control.stop() {
-                Stop::Pause => {
-                    inner.set_result(id, |_| {});
-                    inner.set_state(id, JobState::Paused, None);
-                }
-                _ => {
-                    inner.set_result(id, |_| {});
-                    inner.finish(id, JobState::Cancelled, None);
-                }
+                Stop::Pause => inner.set_state(id, JobState::Paused, None),
+                _ => inner.finish(id, JobState::Cancelled, None),
             }
-            clear_control(&inner, id, &control);
-            inner.wake.notify_one();
-            return;
+            End::Settled
         }
         Err(e) => {
             let message = e.to_string();
@@ -421,16 +519,11 @@ async fn compress_job(
             });
             if request.on_failure == CompressionFailure::SkipFile {
                 inner.finish(id, JobState::Failed, Some(failure_error(&message)));
-                clear_control(&inner, id, &control);
-                inner.wake.notify_one();
-                return;
+                return End::Settled;
             }
+            End::Upload
         }
     }
-    clear_control(&inner, id, &control);
-    super::Hooks(inner.clone()).checkpoint(id);
-    inner.requeue_front(id);
-    inner.wake.notify_one();
 }
 
 fn clear_control(inner: &Inner, id: JobId, control: &Arc<RunControl>) {

@@ -84,6 +84,61 @@ impl FileIdentity {
     }
 }
 
+/// What a file R2Dock wrote looked like when it was finished: size,
+/// modification time, and (where the platform provides one) its identity.
+/// A move within the same folder keeps all three, so a file that matches
+/// is the one R2Dock wrote and not an unrelated file of the same size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WrittenFile {
+    pub len: u64,
+    pub mtime_ns: u64,
+    #[serde(default)]
+    pub identity: Option<FileIdentity>,
+}
+
+impl WrittenFile {
+    pub fn of(meta: &std::fs::Metadata) -> Self {
+        let fp = Fingerprint::of(meta);
+        Self {
+            len: fp.len,
+            mtime_ns: fp.mtime_ns,
+            identity: FileIdentity::of(meta),
+        }
+    }
+
+    /// Whether the file at `path` (not following a symbolic link) is this one.
+    pub fn matches(&self, path: &Path) -> bool {
+        std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file() && Self::of(&m) == *self)
+    }
+}
+
+/// SHA-256 (hex) of a file R2Dock wrote, read without following a
+/// symbolic link, with what the file looked like. Fails if the file
+/// changed while it was read. Blocking.
+pub fn digest_written(path: &Path) -> std::io::Result<(WrittenFile, String)> {
+    use sha2::{Digest as _, Sha256};
+    let mut file = open_nofollow(path)?;
+    let before = file.metadata()?;
+    if !before.is_file() {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let written = WrittenFile::of(&before);
+    if WrittenFile::of(&file.metadata()?) != written {
+        return Err(std::io::ErrorKind::Interrupted.into());
+    }
+    Ok((written, hex::encode(hasher.finalize())))
+}
+
 /// A local file checked for upload.
 #[derive(Debug)]
 pub struct SourceFile {

@@ -125,6 +125,11 @@ pub struct DownloadState {
     pub etag: Option<String>,
     pub temp: PathBuf,
     pub final_path: PathBuf,
+    /// Recorded after the finished partial was synced and checked, just
+    /// before it is moved into place. Recovery trusts a final file only when
+    /// it matches this record. Older journals have none.
+    #[serde(default)]
+    pub finalized: Option<crate::source::WrittenFile>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

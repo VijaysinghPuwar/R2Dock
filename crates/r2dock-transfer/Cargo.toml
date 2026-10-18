@@ -26,6 +26,7 @@ mime_guess.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 same-file = "1"
+sha2 = "0.10"
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

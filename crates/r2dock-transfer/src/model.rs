@@ -115,6 +115,20 @@ pub struct CompressedCopy {
     /// The original as it was when compressed; a change means compress again.
     pub original: crate::source::Fingerprint,
     pub preset: String,
+    /// The copy as it was after it passed verification. A copy that no
+    /// longer matches is compressed again, never uploaded. Older journals
+    /// have none, so their copies are compressed again too.
+    #[serde(default)]
+    pub output: Option<CopyDigest>,
+}
+
+/// Size, file identity, and SHA-256 of a verified compressed copy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyDigest {
+    pub file: crate::source::WrittenFile,
+    /// Lowercase hex.
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
