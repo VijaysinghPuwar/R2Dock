@@ -317,6 +317,11 @@ pub struct SettingsView {
     pub log_dir: String,
     pub credential_store: String,
     pub credential_store_available: bool,
+    /// Removed or replaced secrets still waiting to be deleted from the
+    /// credential store. Absent when there are none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub credential_cleanup_pending: Option<u32>,
 }
 
 /// Which rows to include in an activity export.

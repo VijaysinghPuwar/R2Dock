@@ -550,6 +550,10 @@ stateDiagram-v2
 
 Rotation: "Replace secret" writes the new secret under a new reference, tests it, switches the config, then deletes the old entry. Transfers in progress for that connection pause and resume with the new client.
 
+Config changes are committed as a whole: the change is applied to a copy of the config, the copy is written atomically, and only then does it become the live config and are cached clients for that connection dropped. A failed save leaves memory, disk, cached clients, and stored secrets as they were (a secret written for the failed save is deleted again). The same rule applies to `settings.json`.
+
+Unused credential store entries are never forgotten. When a connection is removed or its secret replaced, the old entry's opaque reference is recorded in `connections.json` (`secretCleanup`, references only, never secret values) in the same save that stops using it. The entry is then deleted; if the credential store is unavailable or refuses, the record stays and deletion is retried at the next start and after every connection change. A reference still used by a connection is never deleted. Settings > Security shows how many entries are still waiting. There is no plaintext fallback at any step.
+
 ### 9.4 Tauri hardening
 
 - Capabilities: one capability file for the `main` window with only the needed core permissions plus dialog (open/save), notification, clipboard write, opener (only for "Show in folder" and https links to docs), and updater. No `fs`, `shell`, `http`, or remote URL access.
@@ -618,6 +622,7 @@ Downloads:
 | Asset | Threat | Mitigation | Residual risk |
 |---|---|---|---|
 | R2 secret | Read from disk by other users or malware | OS credential store only, no plaintext fallback | Malware running as the same user can usually query the store or memory. Not defended. |
+| R2 secret | Left in the credential store after its connection is removed or replaced | Opaque cleanup records saved with the config change, retried at startup and after each change | An entry stays until the store accepts the delete; the user can see the pending count in Settings > Security |
 | R2 secret | Leaks through logs, crash reports, errors | Redaction layer, `secrecy`, error DTOs without raw responses, no crash upload | Low |
 | R2 secret | Exposed to webview JavaScript | Never sent to frontend after entry; strict CSP; no remote scripts | XSS during form entry could read the typed value. Mitigated by CSP and no remote content |
 | Frontend | XSS from object names or previewed content | Names rendered as text; no HTML rendering of objects; CSP; SVG via img only | Low |

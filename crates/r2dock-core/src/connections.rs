@@ -84,6 +84,12 @@ pub struct ConnectionsFile {
     pub version: u32,
     pub connections: Vec<ConnectionConfig>,
     pub active: Option<Uuid>,
+    /// Credential store references whose secret is no longer used but could
+    /// not be deleted yet (for example, the store was unavailable). Deletion
+    /// is retried at startup and after each connection change. These are
+    /// opaque random ids, never secret values.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub secret_cleanup: Vec<String>,
 }
 
 impl Default for ConnectionsFile {
@@ -92,6 +98,24 @@ impl Default for ConnectionsFile {
             version: CONNECTIONS_VERSION,
             connections: Vec::new(),
             active: None,
+            secret_cleanup: Vec::new(),
+        }
+    }
+}
+
+impl ConnectionsFile {
+    /// Whether a connection still uses this credential store reference.
+    pub fn uses_reference(&self, reference: &str) -> bool {
+        self.connections.iter().any(
+            |c| matches!(&c.secret, SecretLocation::Keychain { reference: r } if r == reference),
+        )
+    }
+
+    /// Record a reference whose secret must be deleted. A reference that is
+    /// still in use is never recorded.
+    pub fn add_cleanup(&mut self, reference: String) {
+        if !self.uses_reference(&reference) && !self.secret_cleanup.contains(&reference) {
+            self.secret_cleanup.push(reference);
         }
     }
 }
@@ -240,6 +264,41 @@ mod tests {
             endpoint_url("abc", Jurisdiction::Fedramp),
             "https://abc.fedramp.r2.cloudflarestorage.com"
         );
+    }
+
+    #[test]
+    fn cleanup_never_records_a_reference_in_use() {
+        let mut file = ConnectionsFile::default();
+        file.connections.push(ConnectionConfig {
+            id: Uuid::nil(),
+            name: "n".into(),
+            account_id: "a".into(),
+            access_key_id: "k".into(),
+            jurisdiction: Jurisdiction::Default,
+            secret: SecretLocation::Keychain {
+                reference: "live".into(),
+            },
+            manual_buckets: Vec::new(),
+            bucket_scoped: false,
+            public_base_urls: Default::default(),
+            favorite_buckets: Vec::new(),
+            created_at: chrono::Utc::now(),
+            last_tested_at: None,
+        });
+        file.add_cleanup("live".into());
+        file.add_cleanup("old".into());
+        file.add_cleanup("old".into());
+        assert_eq!(file.secret_cleanup, vec!["old".to_string()]);
+
+        // Older files without the field still load, and an empty list is not written.
+        let json = serde_json::to_string(&ConnectionsFile::default()).unwrap();
+        assert!(!json.contains("secretCleanup"));
+        let back: ConnectionsFile =
+            serde_json::from_str(r#"{"version":1,"connections":[]}"#).unwrap();
+        assert!(back.secret_cleanup.is_empty());
+        let json = serde_json::to_string(&file).unwrap();
+        let back: ConnectionsFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.secret_cleanup, vec!["old".to_string()]);
     }
 
     #[test]

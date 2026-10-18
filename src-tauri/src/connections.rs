@@ -42,6 +42,12 @@ pub struct ConnectionService {
     missing: Mutex<std::collections::HashSet<Uuid>>,
     /// Test-only: point every client at a local S3 server.
     endpoint_override: Option<String>,
+    /// Credential store references that must be deleted but could not be
+    /// recorded in the config file yet (the save that would record them
+    /// failed). They are added to the next saved config.
+    unsaved_cleanup: Mutex<Vec<String>>,
+    #[cfg(test)]
+    fail_writes: std::sync::atomic::AtomicBool,
 }
 
 fn blocking_err() -> AppError {
@@ -82,6 +88,9 @@ impl ConnectionService {
             status: Mutex::new(HashMap::new()),
             missing: Mutex::new(std::collections::HashSet::new()),
             endpoint_override,
+            unsaved_cleanup: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            fail_writes: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -99,15 +108,91 @@ impl ConnectionService {
         self.keychain.is_some()
     }
 
-    async fn persist(&self) -> Result<(), AppError> {
-        // Take the snapshot inside the lock so writes land in order.
+    /// Apply `change` to a copy of the config, save the copy, and only then
+    /// make it the live config. A failed save leaves memory and disk as they
+    /// were. Commits run one at a time, so none is lost or reordered.
+    async fn commit<R>(
+        &self,
+        change: impl FnOnce(&mut ConnectionsFile) -> Result<R, AppError>,
+    ) -> Result<R, AppError> {
         let _guard = self.persist_lock.lock().await;
-        let snapshot = self.file.read().clone();
+        let mut candidate = self.file.read().clone();
+        let out = change(&mut candidate)?;
+        let unsaved: Vec<String> = self.unsaved_cleanup.lock().drain(..).collect();
+        for r in &unsaved {
+            candidate.add_cleanup(r.clone());
+        }
+        if let Err(e) = self.write(&candidate).await {
+            self.unsaved_cleanup.lock().extend(unsaved);
+            return Err(e);
+        }
+        *self.file.write() = candidate;
+        Ok(out)
+    }
+
+    async fn write(&self, snapshot: &ConnectionsFile) -> Result<(), AppError> {
+        let failed = || AppError::new(ErrorCode::Io, "Could not save connection settings.");
+        #[cfg(test)]
+        if self.fail_writes.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(failed());
+        }
+        let snapshot = snapshot.clone();
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || write_json_atomic(&path, &snapshot))
             .await
             .map_err(|_| blocking_err())?
-            .map_err(|_| AppError::new(ErrorCode::Io, "Could not save connection settings."))
+            .map_err(|_| failed())
+    }
+
+    /// How many unused secrets are still waiting to be deleted from the
+    /// credential store.
+    pub fn pending_secret_cleanup(&self) -> usize {
+        self.file.read().secret_cleanup.len() + self.unsaved_cleanup.lock().len()
+    }
+
+    /// Delete secrets that are no longer used by any connection. Called at
+    /// startup and after every connection change; safe to repeat. Returns how
+    /// many are still waiting (for example while the credential store is
+    /// unavailable).
+    pub async fn cleanup_secrets(&self) -> usize {
+        let pending = {
+            let file = self.file.read();
+            let mut pending = file.secret_cleanup.clone();
+            pending.extend(self.unsaved_cleanup.lock().iter().cloned());
+            pending.retain(|r| !file.uses_reference(r));
+            pending
+        };
+        if let Some(store) = self.keychain.clone()
+            && !pending.is_empty()
+        {
+            let deleted = tokio::task::spawn_blocking(move || {
+                pending
+                    .into_iter()
+                    .filter(|r| store.delete(r).is_ok())
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap_or_default();
+            if !deleted.is_empty() {
+                self.unsaved_cleanup.lock().retain(|r| !deleted.contains(r));
+                // If this save fails the references stay listed; deleting a
+                // missing entry again later is harmless.
+                let _ = self
+                    .commit(|f| {
+                        f.secret_cleanup.retain(|r| !deleted.contains(r));
+                        Ok(())
+                    })
+                    .await;
+            }
+        }
+        let left = self.pending_secret_cleanup();
+        if left > 0 {
+            tracing::warn!(
+                pending = left,
+                "some removed keys could not be deleted from the credential store yet"
+            );
+        }
+        left
     }
 
     fn summary(&self, cfg: &ConnectionConfig, active: Option<Uuid>) -> ConnectionSummary {
@@ -451,16 +536,13 @@ impl ConnectionService {
         let (result, _) = self.run_test(&prepared, input).await?;
         if let Some(id) = input.id {
             self.status.lock().insert(id, ConnectionStatus::Online);
-            if let Some(c) = self
-                .file
-                .write()
-                .connections
-                .iter_mut()
-                .find(|c| c.id == id)
-            {
-                c.last_tested_at = Some(Utc::now());
-            }
-            self.persist().await?;
+            self.commit(|f| {
+                if let Some(c) = f.connections.iter_mut().find(|c| c.id == id) {
+                    c.last_tested_at = Some(Utc::now());
+                }
+                Ok(())
+            })
+            .await?;
         }
         Ok(result)
     }
@@ -476,8 +558,14 @@ impl ConnectionService {
         let id = input.id.unwrap_or_else(Uuid::new_v4);
         let existing = input.id.map(|id| self.get(id)).transpose()?;
 
-        // Store a new secret before switching the config to it.
-        let mut old_reference = None;
+        // Store a new secret under a new reference before switching the
+        // config to it, so the old secret keeps working if anything fails.
+        let old_reference = match existing.as_ref().map(|c| &c.secret) {
+            Some(SecretLocation::Keychain { reference }) => Some(reference.clone()),
+            _ => None,
+        };
+        let mut new_reference_saved = None;
+        let mut previous_session = None;
         let secret_location = if prepared.secret_is_new {
             match &self.keychain {
                 Some(store) => {
@@ -491,16 +579,14 @@ impl ConnectionService {
                         .await
                         .map_err(|_| blocking_err())?
                         .map_err(secret_error)?;
-                    if let Some(SecretLocation::Keychain { reference: old }) =
-                        existing.as_ref().map(|c| c.secret.clone())
-                    {
-                        old_reference = Some(old);
-                    }
+                    new_reference_saved = Some(reference.clone());
                     SecretLocation::Keychain { reference }
                 }
                 None => {
+                    let key = id.to_string();
+                    previous_session = Some(self.session.get(&key).ok());
                     self.session
-                        .set(&id.to_string(), &prepared.secret)
+                        .set(&key, &prepared.secret)
                         .map_err(secret_error)?;
                     SecretLocation::Session
                 }
@@ -541,76 +627,119 @@ impl ConnectionService {
             created_at: existing.as_ref().map_or_else(Utc::now, |c| c.created_at),
             last_tested_at: Some(Utc::now()),
         };
-        {
-            let mut file = self.file.write();
-            match file.connections.iter_mut().find(|c| c.id == id) {
-                Some(slot) => *slot = cfg,
-                None => file.connections.push(cfg),
+        let replaced = prepared.secret_is_new;
+        let committed = self
+            .commit(|f| {
+                match f.connections.iter_mut().find(|c| c.id == id) {
+                    Some(slot) => *slot = cfg,
+                    None => f.connections.push(cfg),
+                }
+                f.active = Some(id);
+                // The replaced secret is recorded for deletion in the same
+                // save that stops using it, so it can never be forgotten.
+                if replaced && let Some(old) = old_reference {
+                    f.add_cleanup(old);
+                }
+                Ok(())
+            })
+            .await;
+        if let Err(e) = committed {
+            // Undo the secret written above; the old config is still live.
+            if let Some(reference) = new_reference_saved {
+                self.discard_reference(reference).await;
             }
-            file.active = Some(id);
+            if let Some(previous) = previous_session {
+                let key = id.to_string();
+                let _ = match previous {
+                    Some(old) => self.session.set(&key, &old),
+                    None => self.session.delete(&key),
+                };
+            }
+            return Err(e);
         }
-        self.persist().await?;
+        // Clients built from the old values are dropped only now that the
+        // new values are saved and live.
         self.invalidate(id);
         self.missing.lock().remove(&id);
         self.status.lock().insert(id, ConnectionStatus::Online);
-
-        // Only now remove the replaced secret.
-        if let (Some(old), Some(store)) = (old_reference, self.keychain.clone()) {
-            let _ = tokio::task::spawn_blocking(move || store.delete(&old)).await;
+        // A session secret left from an earlier save is no longer used.
+        if replaced && self.keychain.is_some() {
+            let _ = self.session.delete(&id.to_string());
         }
+        self.cleanup_secrets().await;
         self.summary_of(id)
     }
 
-    /// Remove a connection and delete its stored secret.
+    /// Delete a secret that was written but never committed. If that fails,
+    /// remember the reference so a later cleanup removes it.
+    async fn discard_reference(&self, reference: String) {
+        let Some(store) = self.keychain.clone() else {
+            return;
+        };
+        let r = reference.clone();
+        let deleted = tokio::task::spawn_blocking(move || store.delete(&r))
+            .await
+            .is_ok_and(|r| r.is_ok());
+        if !deleted {
+            self.unsaved_cleanup.lock().push(reference);
+        }
+    }
+
+    /// Remove a connection and delete its stored secret. The connection is
+    /// removed from the saved config together with a record that its secret
+    /// must be deleted, and the secret is deleted after that. If the
+    /// credential store cannot delete it now, the record stays and deletion
+    /// is retried at the next start or connection change.
     pub async fn remove(self: &Arc<Self>, id: Uuid) -> Result<(), AppError> {
-        let cfg = self.get(id)?;
-        match &cfg.secret {
-            SecretLocation::Keychain { reference } => {
-                if let Some(store) = self.keychain.clone() {
-                    let r = reference.clone();
-                    tokio::task::spawn_blocking(move || store.delete(&r))
-                        .await
-                        .map_err(|_| blocking_err())?
-                        .map_err(secret_error)?;
-                }
+        self.commit(|f| {
+            let cfg = f
+                .connections
+                .iter()
+                .find(|c| c.id == id)
+                .cloned()
+                .ok_or_else(|| AppError::not_found("Connection not found."))?;
+            f.connections.retain(|c| c.id != id);
+            if f.active == Some(id) {
+                f.active = f.connections.first().map(|c| c.id);
             }
-            SecretLocation::Session => {
-                let _ = self.session.delete(&id.to_string());
+            if let SecretLocation::Keychain { reference } = cfg.secret {
+                f.add_cleanup(reference);
             }
-        }
-        {
-            let mut file = self.file.write();
-            file.connections.retain(|c| c.id != id);
-            if file.active == Some(id) {
-                file.active = file.connections.first().map(|c| c.id);
-            }
-        }
+            Ok(())
+        })
+        .await?;
+        let _ = self.session.delete(&id.to_string());
         self.invalidate(id);
         self.status.lock().remove(&id);
         self.missing.lock().remove(&id);
-        self.persist().await
+        self.cleanup_secrets().await;
+        Ok(())
     }
 
     pub async fn set_active(&self, id: Uuid) -> Result<(), AppError> {
-        self.get(id)?;
-        self.file.write().active = Some(id);
-        self.persist().await
+        self.commit(|f| {
+            if !f.connections.iter().any(|c| c.id == id) {
+                return Err(AppError::not_found("Connection not found."));
+            }
+            f.active = Some(id);
+            Ok(())
+        })
+        .await
     }
 
     async fn update<F>(&self, id: Uuid, f: F) -> Result<ConnectionSummary, AppError>
     where
         F: FnOnce(&mut ConnectionConfig) -> Result<(), AppError>,
     {
-        {
-            let mut file = self.file.write();
+        self.commit(|file| {
             let cfg = file
                 .connections
                 .iter_mut()
                 .find(|c| c.id == id)
                 .ok_or_else(|| AppError::not_found("Connection not found."))?;
-            f(cfg)?;
-        }
-        self.persist().await?;
+            f(cfg)
+        })
+        .await?;
         self.summary_of(id)
     }
 
@@ -901,5 +1030,229 @@ mod tests {
         assert_eq!(s.favorite_buckets, vec!["alpha".to_string()]);
         let s = svc.toggle_favorite(saved.id, "alpha").await.unwrap();
         assert!(s.favorite_buckets.is_empty());
+    }
+
+    /// A credential store whose deletes can be made to fail, and which
+    /// remembers every reference written to it.
+    #[derive(Default)]
+    struct FlakyStore {
+        inner: MemoryStore,
+        fail_delete: std::sync::atomic::AtomicBool,
+        written: Mutex<Vec<String>>,
+    }
+
+    impl FlakyStore {
+        fn stored(&self) -> Vec<String> {
+            self.written
+                .lock()
+                .iter()
+                .filter(|r| self.inner.get(r).is_ok())
+                .cloned()
+                .collect()
+        }
+        fn set_fail_delete(&self, fail: bool) {
+            self.fail_delete
+                .store(fail, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl SecretStore for FlakyStore {
+        fn backend(&self) -> r2dock_secrets::Backend {
+            r2dock_secrets::Backend::native()
+        }
+        fn set(&self, reference: &str, secret: &SecretString) -> Result<(), SecretError> {
+            self.written.lock().push(reference.to_string());
+            self.inner.set(reference, secret)
+        }
+        fn get(&self, reference: &str) -> Result<SecretString, SecretError> {
+            self.inner.get(reference)
+        }
+        fn delete(&self, reference: &str) -> Result<(), SecretError> {
+            if self.fail_delete.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(SecretError::Unavailable);
+            }
+            self.inner.delete(reference)
+        }
+    }
+
+    fn with_store(
+        s3: &LocalS3,
+        path: &std::path::Path,
+        store: Option<Arc<FlakyStore>>,
+    ) -> Arc<ConnectionService> {
+        Arc::new(ConnectionService::load(
+            path.to_path_buf(),
+            store.map(|s| s as Arc<dyn SecretStore>),
+            Some(s3.endpoint.clone()),
+        ))
+    }
+
+    fn reference_of(svc: &ConnectionService, id: Uuid) -> String {
+        match svc.get(id).unwrap().secret {
+            SecretLocation::Keychain { reference } => reference,
+            SecretLocation::Session => panic!("expected a keychain secret"),
+        }
+    }
+
+    fn fail_writes(svc: &ConnectionService, fail: bool) {
+        svc.fail_writes
+            .store(fail, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[tokio::test]
+    async fn removal_while_store_unavailable_keeps_a_cleanup_record() {
+        let s3 = LocalS3::start(&["alpha"]).await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("connections.json");
+        let store = Arc::new(FlakyStore::default());
+        let svc = with_store(&s3, &path, Some(store.clone()));
+        let saved = svc.save(&input(Some(SECRET_KEY), None)).await.unwrap();
+        let reference = reference_of(&svc, saved.id);
+
+        // Next start: the credential store is unavailable.
+        let offline = with_store(&s3, &path, None);
+        offline.remove(saved.id).await.unwrap();
+        assert!(offline.list().is_empty());
+        assert_eq!(offline.pending_secret_cleanup(), 1);
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert!(on_disk.contains(&reference), "cleanup record is saved");
+        assert!(!on_disk.contains(SECRET_KEY));
+        assert_eq!(store.stored(), vec![reference.clone()]);
+
+        // The start after that: the store works again and the secret goes.
+        let online = with_store(&s3, &path, Some(store.clone()));
+        assert_eq!(online.cleanup_secrets().await, 0);
+        assert!(store.stored().is_empty());
+        assert!(!std::fs::read_to_string(&path).unwrap().contains(&reference));
+        // Repeating is harmless.
+        assert_eq!(online.cleanup_secrets().await, 0);
+    }
+
+    #[tokio::test]
+    async fn failed_secret_deletes_are_retried() {
+        let s3 = LocalS3::start(&["alpha"]).await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("connections.json");
+        let store = Arc::new(FlakyStore::default());
+        let svc = with_store(&s3, &path, Some(store.clone()));
+        let saved = svc.save(&input(Some(SECRET_KEY), None)).await.unwrap();
+        let old = reference_of(&svc, saved.id);
+
+        // Replace the secret while deletes fail: the old entry is kept on
+        // record, and the new one is used.
+        store.set_fail_delete(true);
+        svc.save(&input(Some(SECRET_KEY), Some(saved.id)))
+            .await
+            .unwrap();
+        let new = reference_of(&svc, saved.id);
+        assert_ne!(old, new);
+        assert_eq!(svc.pending_secret_cleanup(), 1);
+        svc.client(saved.id).await.unwrap();
+
+        // Remove while deletes still fail: both are on record.
+        svc.remove(saved.id).await.unwrap();
+        assert_eq!(svc.pending_secret_cleanup(), 2);
+        assert_eq!(store.stored().len(), 2);
+
+        store.set_fail_delete(false);
+        assert_eq!(svc.cleanup_secrets().await, 0);
+        assert!(store.stored().is_empty());
+    }
+
+    #[tokio::test]
+    async fn session_fallback_records_the_replaced_keychain_secret() {
+        let s3 = LocalS3::start(&["alpha"]).await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("connections.json");
+        let store = Arc::new(FlakyStore::default());
+        let svc = with_store(&s3, &path, Some(store.clone()));
+        let saved = svc.save(&input(Some(SECRET_KEY), None)).await.unwrap();
+        let old = reference_of(&svc, saved.id);
+
+        let offline = with_store(&s3, &path, None);
+        let s = offline
+            .save(&input(Some(SECRET_KEY), Some(saved.id)))
+            .await
+            .unwrap();
+        assert_eq!(s.secret_storage, SecretStorage::Session);
+        assert_eq!(offline.pending_secret_cleanup(), 1);
+
+        let online = with_store(&s3, &path, Some(store.clone()));
+        assert_eq!(online.cleanup_secrets().await, 0);
+        assert!(store.inner.get(&old).is_err());
+    }
+
+    #[tokio::test]
+    async fn failed_saves_leave_the_committed_state() {
+        let s3 = LocalS3::start(&["alpha"]).await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("connections.json");
+        let store = Arc::new(FlakyStore::default());
+        let svc = with_store(&s3, &path, Some(store.clone()));
+        let saved = svc.save(&input(Some(SECRET_KEY), None)).await.unwrap();
+        let reference = reference_of(&svc, saved.id);
+        svc.client(saved.id).await.unwrap();
+        let disk_before = std::fs::read_to_string(&path).unwrap();
+
+        fail_writes(&svc, true);
+        assert!(
+            svc.set_public_url(saved.id, "alpha", Some("https://media.example.com"))
+                .await
+                .is_err()
+        );
+        assert_eq!(svc.public_base_url(saved.id, "alpha"), None);
+        assert!(svc.toggle_favorite(saved.id, "alpha").await.is_err());
+        assert!(svc.list()[0].favorite_buckets.is_empty());
+
+        // Replacing the secret fails: the old reference stays live, the new
+        // secret is deleted again, and the cached client is kept.
+        let mut edit = input(Some(SECRET_KEY), Some(saved.id));
+        edit.name = "Renamed".into();
+        assert!(svc.save(&edit).await.is_err());
+        assert_eq!(svc.list()[0].name, "Personal R2");
+        assert_eq!(reference_of(&svc, saved.id), reference);
+        assert_eq!(store.stored(), vec![reference.clone()]);
+        assert!(svc.clients.lock().contains_key(&saved.id));
+
+        // Removing fails: the connection and its secret stay.
+        assert!(svc.remove(saved.id).await.is_err());
+        assert_eq!(svc.list().len(), 1);
+        assert_eq!(store.stored(), vec![reference.clone()]);
+        assert_eq!(svc.pending_secret_cleanup(), 0);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), disk_before);
+
+        // A secret that cannot be deleted after a failed save is remembered
+        // and recorded by the next successful save.
+        store.set_fail_delete(true);
+        assert!(svc.save(&edit).await.is_err());
+        assert_eq!(svc.pending_secret_cleanup(), 1);
+        fail_writes(&svc, false);
+        store.set_fail_delete(false);
+        let s = svc.save(&edit).await.unwrap();
+        assert_eq!(s.name, "Renamed");
+        assert_eq!(svc.cleanup_secrets().await, 0);
+        assert_eq!(store.stored(), vec![reference_of(&svc, saved.id)]);
+        assert!(!svc.clients.lock().contains_key(&saved.id));
+    }
+
+    #[tokio::test]
+    async fn failed_session_save_restores_the_session_secret() {
+        let s3 = LocalS3::start(&["alpha"]).await;
+        let dir = tempfile::tempdir().unwrap();
+        let svc = service(&s3, dir.path(), false).await;
+        fail_writes(&svc, true);
+        assert!(svc.save(&input(Some(SECRET_KEY), None)).await.is_err());
+        assert!(svc.list().is_empty());
+        fail_writes(&svc, false);
+        let saved = svc.save(&input(Some(SECRET_KEY), None)).await.unwrap();
+        fail_writes(&svc, true);
+        assert!(
+            svc.save(&input(Some(SECRET_KEY), Some(saved.id)))
+                .await
+                .is_err()
+        );
+        assert_eq!(svc.list()[0].secret_storage, SecretStorage::Session);
+        svc.clients.lock().clear();
+        svc.client(saved.id).await.unwrap();
     }
 }

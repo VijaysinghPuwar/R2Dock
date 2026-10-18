@@ -129,17 +129,17 @@ impl AppState {
         self.paths.config.join("settings.json")
     }
 
-    pub async fn save_settings(&self) -> Result<(), AppError> {
-        // Writes go one at a time and each takes its snapshot inside the
-        // lock, so the newest settings are always the last ones on disk.
+    /// Change the settings: the change is applied to a copy, the copy is
+    /// saved, and only then does it become the live settings. When the save
+    /// fails nothing changes. Returns the settings that were replaced.
+    pub async fn update_settings(
+        &self,
+        change: impl FnOnce(&mut SettingsFile),
+    ) -> Result<SettingsFile, AppError> {
+        // Changes go one at a time, so none is lost and the newest settings
+        // are always the last ones on disk.
         static WRITING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-        let _writing = WRITING.lock().await;
-        let snapshot = self.settings.read().clone();
-        let path = self.settings_path();
-        tokio::task::spawn_blocking(move || write_json_atomic(&path, &snapshot))
-            .await
-            .map_err(|_| AppError::internal("A background task stopped unexpectedly."))?
-            .map_err(|_| AppError::new(r2dock_core::ErrorCode::Io, "Could not save settings."))
+        commit_json(&self.settings, &WRITING, self.settings_path(), change).await
     }
 
     /// The download folder: chosen in settings, else the system Downloads folder.
@@ -164,6 +164,30 @@ impl AppState {
     pub fn display_path(&self, path: &std::path::Path) -> String {
         r2dock_core::redact::redact_path(path, self.paths.home.as_deref())
     }
+}
+
+/// Apply `change` to a copy of `cell`, write the copy to `path`, then publish
+/// it. Holding `lock` for the whole step keeps concurrent changes in order.
+async fn commit_json<T>(
+    cell: &RwLock<T>,
+    lock: &tokio::sync::Mutex<()>,
+    path: PathBuf,
+    change: impl FnOnce(&mut T),
+) -> Result<T, AppError>
+where
+    T: Clone + serde::Serialize + Send + 'static,
+{
+    let _writing = lock.lock().await;
+    let old = cell.read().clone();
+    let mut candidate = old.clone();
+    change(&mut candidate);
+    let snapshot = candidate.clone();
+    tokio::task::spawn_blocking(move || write_json_atomic(&path, &snapshot))
+        .await
+        .map_err(|_| AppError::internal("A background task stopped unexpectedly."))?
+        .map_err(|_| AppError::new(r2dock_core::ErrorCode::Io, "Could not save settings."))?;
+    *cell.write() = candidate;
+    Ok(old)
 }
 
 /// Lets the transfer engine get clients from the connection service.
@@ -191,5 +215,42 @@ mod tests {
         }
         assert!(r.items.lock().len() <= REGISTRY_CAP);
         assert_eq!(r.take("unknown"), None);
+    }
+
+    #[tokio::test]
+    async fn settings_change_is_published_only_after_it_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = tokio::sync::Mutex::new(());
+        let cell = RwLock::new(SettingsFile::default());
+        let good = dir.path().join("settings.json");
+        let old = commit_json(&cell, &lock, good.clone(), |s| {
+            s.download_dir = Some(PathBuf::from("first"));
+        })
+        .await
+        .unwrap();
+        assert_eq!(old.download_dir, None);
+        assert_eq!(cell.read().download_dir, Some(PathBuf::from("first")));
+        let on_disk: SettingsFile = serde_json::from_slice(&std::fs::read(&good).unwrap()).unwrap();
+        assert_eq!(on_disk.download_dir, Some(PathBuf::from("first")));
+
+        // A parent that is a regular file makes the save fail.
+        let blocker = dir.path().join("not-a-folder");
+        std::fs::write(&blocker, b"x").unwrap();
+        let bad = blocker.join("settings.json");
+        for change in [
+            (|s: &mut SettingsFile| s.download_dir = Some(PathBuf::from("second")))
+                as fn(&mut SettingsFile),
+            |s| s.activity_dir = Some(PathBuf::from("logs")),
+            |s| *s = SettingsFile::default(),
+            |s| s.preferences.concurrency = 1,
+        ] {
+            let err = commit_json(&cell, &lock, bad.clone(), change)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code, r2dock_core::ErrorCode::Io);
+            assert_eq!(cell.read().download_dir, Some(PathBuf::from("first")));
+            assert_eq!(cell.read().activity_dir, None);
+            assert_eq!(cell.read().preferences, SettingsFile::default().preferences);
+        }
     }
 }

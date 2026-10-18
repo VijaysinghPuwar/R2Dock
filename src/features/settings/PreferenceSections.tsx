@@ -231,6 +231,14 @@ export function SecuritySection() {
       <p>
         Credentials are stored in: <strong>{settings.data?.credentialStore ?? "--"}</strong>
       </p>
+      {settings.data?.credentialCleanupPending ? (
+        <p className="secondary">
+          {settings.data.credentialCleanupPending === 1
+            ? "1 removed key is"
+            : `${settings.data.credentialCleanupPending} removed keys are`}{" "}
+          still in the credential store because it could not delete them. R2Dock tries again at the next start.
+        </p>
+      ) : null}
       <p className="secondary">Deletes always ask for confirmation.</p>
       <NumberSetting
         label="Typed confirmation for deleting more than"

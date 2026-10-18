@@ -77,6 +77,14 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         keychain,
         endpoint_override,
     ));
+    // Delete secrets left by connections that were removed or replaced
+    // while the credential store could not delete them.
+    {
+        let connections = connections.clone();
+        tauri::async_runtime::spawn(async move {
+            connections.cleanup_secrets().await;
+        });
+    }
 
     let mut config = EngineConfig::new(paths.data.clone());
     config.concurrency = usize::from(settings.preferences.concurrency);

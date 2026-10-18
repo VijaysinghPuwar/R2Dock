@@ -12,10 +12,6 @@ use crate::dialogs;
 use crate::dto::{ExportRange, LogKind, SettingsView};
 use crate::state::AppState;
 
-/// Held from changing the settings until they are on disk, so saves from
-/// these commands run one at a time and an older snapshot never lands last.
-static SAVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 pub fn view(state: &AppState) -> SettingsView {
     let preferences = state.settings.read().preferences.clone();
     SettingsView {
@@ -29,6 +25,10 @@ pub fn view(state: &AppState) -> SettingsView {
         log_dir: state.display_path(&state.paths.logs),
         credential_store: state.credential_store_label.clone(),
         credential_store_available: state.connections.keychain_available(),
+        credential_cleanup_pending: match state.connections.pending_secret_cleanup() {
+            0 => None,
+            n => Some(u32::try_from(n).unwrap_or(u32::MAX)),
+        },
     }
 }
 
@@ -75,19 +75,18 @@ pub async fn settings_set(
     preferences: Preferences,
 ) -> CmdResult<SettingsView> {
     let new = preferences.sanitized();
-    let _saving = SAVE_LOCK.lock().await;
-    let old = std::mem::replace(&mut state.settings.write().preferences, new.clone());
+    let result = state.update_settings(|s| s.preferences = new.clone()).await;
     // Record which settings changed (names only, never values of paths).
+    let changed = match &result {
+        Ok(old) => changed_fields(&old.preferences, &new),
+        Err(_) => changed_fields(&state.settings.read().preferences, &new),
+    };
     let act = state
         .activity
         .start_action("settings_set")
-        .field("changed", changed_fields(&old, &new));
-    let result = state.save_settings().await;
+        .field("changed", changed);
     if result.is_ok() {
         apply(&state, log.0.as_ref());
-    } else {
-        // Keep memory in step with the file on disk.
-        state.settings.write().preferences = old;
     }
     act.end(&result);
     result?;
@@ -103,9 +102,10 @@ pub async fn settings_choose_download_dir(
         if !dir.is_dir() {
             return Err(AppError::invalid_input("Choose an existing folder."));
         }
-        let _saving = SAVE_LOCK.lock().await;
-        state.settings.write().download_dir = Some(dir);
-        let result = state.save_settings().await;
+        let result = state
+            .update_settings(|s| s.download_dir = Some(dir))
+            .await
+            .map(|_| ());
         state
             .activity
             .start_action("download_folder_changed")
@@ -126,10 +126,14 @@ pub async fn settings_choose_activity_dir(
         if !dir.is_dir() {
             return Err(AppError::invalid_input("Choose an existing folder."));
         }
-        let _saving = SAVE_LOCK.lock().await;
-        state.settings.write().activity_dir = Some(dir);
-        let result = state.save_settings().await;
-        apply(&state, log.0.as_ref());
+        let result = state
+            .update_settings(|s| s.activity_dir = Some(dir))
+            .await
+            .map(|_| ());
+        // Only a saved folder change moves the activity log.
+        if result.is_ok() {
+            apply(&state, log.0.as_ref());
+        }
         state
             .activity
             .start_action("activity_folder_changed")
@@ -161,10 +165,13 @@ pub async fn activity_reset_dir(
     state: State<'_, AppState>,
     log: State<'_, crate::LogHandle>,
 ) -> CmdResult<SettingsView> {
-    let _saving = SAVE_LOCK.lock().await;
-    state.settings.write().activity_dir = None;
-    let result = state.save_settings().await;
-    apply(&state, log.0.as_ref());
+    let result = state
+        .update_settings(|s| s.activity_dir = None)
+        .await
+        .map(|_| ());
+    if result.is_ok() {
+        apply(&state, log.0.as_ref());
+    }
     state
         .activity
         .start_action("activity_folder_reset")
@@ -301,10 +308,13 @@ pub async fn settings_reset(
     state: State<'_, AppState>,
     log: State<'_, crate::LogHandle>,
 ) -> CmdResult<SettingsView> {
-    let _saving = SAVE_LOCK.lock().await;
-    *state.settings.write() = SettingsFile::default();
-    let result = state.save_settings().await;
-    apply(&state, log.0.as_ref());
+    let result = state
+        .update_settings(|s| *s = SettingsFile::default())
+        .await
+        .map(|_| ());
+    if result.is_ok() {
+        apply(&state, log.0.as_ref());
+    }
     state.activity.start_action("settings_reset").end(&result);
     result?;
     Ok(view(&state))

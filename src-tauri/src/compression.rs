@@ -184,8 +184,7 @@ impl CompressionService {
         let result = result.map_err(|e| tools_error(&e));
         if result.is_ok() {
             // The download replaces a picked system FFmpeg.
-            state.settings.write().ffmpeg_path = None;
-            state.save_settings().await?;
+            state.update_settings(|s| s.ffmpeg_path = None).await?;
         }
         self.refresh(state).await;
         result.map(|_| ())
@@ -230,16 +229,16 @@ impl CompressionService {
         detect::use_system(&path)
             .await
             .map_err(|e| AppError::invalid_input(e.to_string()))?;
-        state.settings.write().ffmpeg_path = Some(path);
-        state.save_settings().await?;
+        state
+            .update_settings(|s| s.ffmpeg_path = Some(path))
+            .await?;
         self.refresh(state).await;
         Ok(())
     }
 
     /// Go back to the downloaded tools.
     pub async fn use_downloaded(&self, state: &AppState) -> Result<(), AppError> {
-        state.settings.write().ffmpeg_path = None;
-        state.save_settings().await?;
+        state.update_settings(|s| s.ffmpeg_path = None).await?;
         self.refresh(state).await;
         Ok(())
     }

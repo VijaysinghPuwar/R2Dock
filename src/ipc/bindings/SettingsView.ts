@@ -13,4 +13,9 @@ activityDirIsDefault: boolean,
 /**
  * Technical (diagnostic) log folder, with the home folder shown as `~`.
  */
-logDir: string, credentialStore: string, credentialStoreAvailable: boolean, };
+logDir: string, credentialStore: string, credentialStoreAvailable: boolean, 
+/**
+ * Removed or replaced secrets still waiting to be deleted from the
+ * credential store. Absent when there are none.
+ */
+credentialCleanupPending?: number, };
