@@ -12,10 +12,10 @@ export function HelpPanel() {
           Choose "Object Read &amp; Write" and pick the buckets R2Dock should manage. Choose "Admin" permissions only if you
           need to see all buckets.
         </li>
-        <li>Copy the Access Key ID and Secret Access Key. The secret is shown only once.</li>
+        <li>Copy the Access Key ID and Secret Access Key. The secret is shown only once. Optionally copy the Token value too, so R2Dock can show custom domain links.</li>
       </ol>
       <p className="help-note">
-        R2 S3 credentials are different from Cloudflare API tokens used by other tools. R2Dock only needs the S3 credentials.
+        R2Dock needs only the S3 credentials to manage files. The token is optional and is used only to look up your buckets' custom domains.
       </p>
     </section>
   );

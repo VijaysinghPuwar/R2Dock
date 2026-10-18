@@ -539,7 +539,7 @@ Help drawer ("Help finding credentials"), slides in from the right, 360 px:
 4. Choose "Object Read & Write" and pick the buckets R2Dock should manage. Choose "Admin" permissions only if you need to see all buckets.
 5. Copy the Access Key ID and Secret Access Key. The secret is shown only once.
 
-Include a note: "R2 S3 credentials are different from Cloudflare API tokens used by other tools. R2Dock only needs the S3 credentials." Steps describe the dashboard in words only; do not reproduce Cloudflare screenshots or branding.
+Include a note: "R2Dock needs only the S3 credentials to manage files. The token is optional and is used only to look up your buckets' custom domains." Steps describe the dashboard in words only; do not reproduce Cloudflare screenshots or branding.
 
 ### Screen 3: Main Dashboard / File Explorer
 
