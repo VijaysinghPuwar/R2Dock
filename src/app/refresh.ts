@@ -14,6 +14,7 @@ export function refreshCurrentView(client: QueryClient): void {
         void client.resetQueries({ queryKey: qk.objects(connection.id, loc.bucket, loc.prefix) });
         void client.resetQueries({ queryKey: ["search", connection.id, loc.bucket] });
         void client.invalidateQueries({ queryKey: ["head", connection.id, loc.bucket] });
+        void client.invalidateQueries({ queryKey: ["text", connection.id, loc.bucket] });
       }
       break;
     case "buckets":

@@ -1,4 +1,5 @@
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleAlert, Pause, Play, RotateCw, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { transferShow } from "../../ipc/commands";
 import type { JobSnapshot } from "../../ipc/bindings/JobSnapshot";
@@ -6,7 +7,7 @@ import type { GroupInfo } from "../../ipc/bindings/GroupInfo";
 import { Button, IconButton } from "../../components/Button";
 import { OpenActivityLogButton } from "../../components/Feedback";
 import { ProgressBar, type ProgressTone } from "../../components/ProgressBar";
-import { useNavStore } from "../../app/navStore";
+import { showInBucket } from "../../app/showInBucket";
 import {
   formatBytes,
   formatDuration,
@@ -126,6 +127,7 @@ function statusParts(job: JobSnapshot): { text: string; aria: string } {
 }
 
 export function JobActions({ job, compact = false }: { job: JobSnapshot; compact?: boolean }) {
+  const client = useQueryClient();
   const size = "sm" as const;
   const buttons: ReactNode[] = [];
   if (job.state === "needsDecision") {
@@ -167,7 +169,7 @@ export function JobActions({ job, compact = false }: { job: JobSnapshot; compact
   }
   if (job.state === "completed" && job.direction === "upload" && !compact) {
     buttons.push(
-      <Button key="bucket" size={size} variant="ghost" onClick={() => useNavStore.getState().openBucket(job.bucket, parentPrefix(job.key))}>
+      <Button key="bucket" size={size} variant="ghost" onClick={() => void showInBucket(client, { connectionId: job.connectionId, bucket: job.bucket, prefix: parentPrefix(job.key) })}>
         Show in bucket
       </Button>,
     );

@@ -4,8 +4,9 @@ import type { ConnectionSummary } from "../../ipc/bindings/ConnectionSummary";
 import type { Direction } from "../../ipc/bindings/Direction";
 import type { JobSnapshot } from "../../ipc/bindings/JobSnapshot";
 import type { TransferEvent } from "../../ipc/bindings/TransferEvent";
+import { invalidateObjectChanges, type ObjectChange } from "../../app/objectChanges";
 import { qk } from "../../app/queries";
-import { useNavStore } from "../../app/navStore";
+import { showInBucket } from "../../app/showInBucket";
 import { useUiStore } from "../../app/uiStore";
 import { toast } from "../../components/toastStore";
 import { folderLabel, parentPrefix } from "../../lib/keys";
@@ -32,20 +33,30 @@ const FLUSH_MS = 50;
 const batch = new Map<string, Direction>();
 /** Ids in `batch` that are still working, so the idle check is O(1) per event. */
 const moving = new Set<string>();
-const pendingInvalidations = new Map<string, number>();
 
-function scheduleListingRefresh(client: QueryClient, connectionId: string, bucket: string) {
-  const id = `${connectionId}\u0000${bucket}`;
-  const existing = pendingInvalidations.get(id);
-  if (existing !== undefined) window.clearTimeout(existing);
-  const t = window.setTimeout(() => {
-    pendingInvalidations.delete(id);
-    void client.invalidateQueries({ queryKey: qk.objectsBucket(connectionId, bucket) });
-  }, 800);
-  pendingInvalidations.set(id, t);
+/** How long completions are collected before cached views are refreshed. */
+const REFRESH_MS = 800;
+/** Uploaded objects waiting for their views to refresh. */
+let changedObjects: ObjectChange[] = [];
+/** Whether a finished transfer is waiting to show up in history. */
+let historyChanged = false;
+let refreshTimer: number | null = null;
+
+/** Refresh affected views once a burst of completions has settled. */
+function scheduleRefresh(client: QueryClient) {
+  if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = null;
+    const changes = changedObjects;
+    const history = historyChanged;
+    changedObjects = [];
+    historyChanged = false;
+    invalidateObjectChanges(client, changes);
+    if (history) void client.invalidateQueries({ queryKey: qk.history });
+  }, REFRESH_MS);
 }
 
-function summarize(direction: Direction, jobs: JobSnapshot[]) {
+function summarize(client: QueryClient, direction: Direction, jobs: JobSnapshot[]) {
   const completed = jobs.filter((j) => j.state === "completed");
   const failed = jobs.filter((j) => j.state === "failed");
   const skipped = jobs.filter((j) => j.state === "skipped").length;
@@ -72,7 +83,7 @@ function summarize(direction: Direction, jobs: JobSnapshot[]) {
       const prefix = commonPrefix(completed.map((j) => j.key));
       toast.success(`${verb} ${plural(completed.length, "file")} to ${folderLabel(first.bucket, prefix)}.${skippedText}`, {
         label: "Show",
-        run: () => useNavStore.getState().openBucket(first.bucket, prefix),
+        run: () => void showInBucket(client, { connectionId: first.connectionId, bucket: first.bucket, prefix }),
       });
       return;
     }
@@ -95,8 +106,13 @@ function afterEvent(client: QueryClient, before: Record<string, JobSnapshot>, ev
     } else {
       moving.delete(job.id);
     }
-    if (job.direction === "upload" && job.state === "completed" && prev?.state !== "completed") {
-      scheduleListingRefresh(client, job.connectionId, job.bucket);
+    if (isTerminal(job.state) && !(prev && isTerminal(prev.state))) {
+      // Every finished transfer is written to history.
+      historyChanged = true;
+      if (job.direction === "upload" && job.state === "completed") {
+        changedObjects.push({ connectionId: job.connectionId, bucket: job.bucket, key: job.key });
+      }
+      scheduleRefresh(client);
     }
   }
 
@@ -124,7 +140,7 @@ function afterEvent(client: QueryClient, before: Record<string, JobSnapshot>, ev
   batch.clear();
   for (const direction of ["upload", "download"] as const) {
     const jobs = batchJobs.filter((j) => j.direction === direction && isTerminal(j.state));
-    if (jobs.length > 0) summarize(direction, jobs);
+    if (jobs.length > 0) summarize(client, direction, jobs);
   }
 }
 

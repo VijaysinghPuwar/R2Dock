@@ -1,12 +1,21 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderWithProviders } from "../../test/utils";
+import type { ConnectionSummary } from "../../ipc/bindings/ConnectionSummary";
+import { useNavStore } from "../../app/navStore";
+import { qk } from "../../app/queries";
+import { makeConnection } from "../../test/connections";
+import { renderWithProviders, testQueryClient } from "../../test/utils";
 import { makeJob } from "./testJobs";
 
 const transferControl = vi.fn((_id: string, _action: unknown) => Promise.resolve());
 const transferShow = vi.fn((_id: string) => Promise.resolve());
 const openActivityFolder = vi.fn(() => Promise.resolve());
+let savedConnections: ConnectionSummary[] = [];
+const connectionSetActive = vi.fn((id: string) => {
+  savedConnections = savedConnections.map((c) => ({ ...c, active: c.id === id }));
+  return Promise.resolve();
+});
 
 vi.mock("../../ipc/commands", async (orig) => ({
   ...(await orig<typeof import("../../ipc/commands")>()),
@@ -14,6 +23,8 @@ vi.mock("../../ipc/commands", async (orig) => ({
   transferControlMany: vi.fn(() => Promise.resolve()),
   transferShow: (id: string) => transferShow(id),
   openActivityFolder: () => openActivityFolder(),
+  connectionList: () => Promise.resolve(savedConnections),
+  connectionSetActive: (id: string) => connectionSetActive(id),
 }));
 
 const { TransferRow } = await import("./TransferRow");
@@ -126,5 +137,23 @@ describe("TransferRow", () => {
     renderWithProviders(<TransferRow job={makeJob({ state: "running", speedBps: null, etaSecs: null })} />);
     expect(screen.queryByText(/\/s/)).toBeNull();
     expect(screen.queryByText(/left/)).toBeNull();
+  });
+
+  it("Show in bucket opens the folder in the upload's own account", async () => {
+    savedConnections = [
+      makeConnection({ id: "conn-a", name: "Studio" }),
+      makeConnection({ id: "conn-b", name: "Archive", active: true }),
+    ];
+    const client = testQueryClient();
+    client.setQueryData(qk.connections, savedConnections);
+    useNavStore.getState().reset("buckets");
+    renderWithProviders(
+      <TransferRow job={makeJob({ connectionId: "conn-a", bucket: "media-library", key: "covers/a.webp", state: "completed" })} />,
+      { client },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Show in bucket" }));
+    await vi.waitFor(() => expect(useNavStore.getState().loc).toEqual({ view: "browser", bucket: "media-library", prefix: "covers/" }));
+    expect(connectionSetActive).toHaveBeenCalledWith("conn-a");
+    expect(client.getQueryData<ConnectionSummary[]>(qk.connections)?.find((c) => c.active)?.id).toBe("conn-a");
   });
 });
