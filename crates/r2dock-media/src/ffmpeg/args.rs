@@ -202,40 +202,5 @@ pub fn encode_audio(
     Ok(a)
 }
 
-/// Arguments that print the loudest difference between left and right over
-/// a sample (`max_volume` in the log). Silence means the channels match.
-pub fn channel_difference(input: &Path, window: Window) -> Result<Vec<OsString>, ArgsError> {
-    let mut a: Vec<OsString> = ["-hide_banner", "-nostdin", "-loglevel", "info"]
-        .into_iter()
-        .map(OsString::from)
-        .collect();
-    push(
-        &mut a,
-        &[
-            "-protocol_whitelist",
-            "file",
-            "-ss",
-            &format!("{:.3}", window.start_secs),
-            "-t",
-            &format!("{:.3}", window.len_secs),
-            "-i",
-        ],
-    );
-    a.push(file_url(input)?);
-    push(
-        &mut a,
-        &[
-            "-map",
-            "0:a:0",
-            "-af",
-            "pan=mono|c0=c0-c1,volumedetect",
-            "-f",
-            "null",
-            "-",
-        ],
-    );
-    Ok(a)
-}
-
 #[cfg(test)]
 mod tests;

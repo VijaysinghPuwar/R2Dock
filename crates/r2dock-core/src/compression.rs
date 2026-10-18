@@ -59,7 +59,9 @@ pub struct AudioSettings {
     pub lossless: LosslessAction,
     /// Minimum saving in percent; smaller savings upload the original.
     pub min_saving_percent: u8,
-    /// Allow 5.1 and other multichannel audio to be mixed down to stereo.
+    /// Allow fewer channels: 5.1 and other multichannel audio mixed down to
+    /// stereo (or mono for speech), and stereo speech mixed to mono. Off by
+    /// default, so every channel is kept.
     pub allow_downmix: bool,
 }
 

@@ -1,6 +1,10 @@
 //! "Compare quality": 30 second samples of one file at each preset, so the
 //! user can hear the difference before choosing. The original is included
 //! as lossless FLAC from the same 30 seconds.
+//!
+//! Each label is made from the encoding that is actually produced, and
+//! presets that produce the same encoding share one sample: an AAC file
+//! stays AAC whatever the MP3 speech setting says.
 
 use std::path::{Path, PathBuf};
 
@@ -12,68 +16,91 @@ use crate::plan::{
     AudioDecision, AudioInputs, AudioSettings, AudioTarget, Encoding, Mode, MusicQuality,
     SpeechQuality, plan_audio,
 };
-use crate::probe::{ProbeError, probe_audio};
+use crate::probe::{AudioProbe, ProbeError, probe_audio};
 
 /// One playable sample.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sample {
-    /// "Original", "Speech 32 kbps", ...
+    /// "Original", "MP3 32 kbps, mono", ...
     pub label: String,
     pub path: PathBuf,
     /// Size of one hour at this setting, from the sample.
     pub bytes_per_hour: u64,
 }
 
-fn variants(content: Content) -> Vec<(&'static str, AudioSettings)> {
-    let base = AudioSettings::default();
+/// The presets to compare for this content.
+fn variants(content: Content, base: AudioSettings) -> Vec<AudioSettings> {
+    let keep = AudioSettings {
+        mode: Mode::KeepFormat,
+        ..base
+    };
+    let smallest = AudioSettings {
+        mode: Mode::Smallest,
+        ..base
+    };
     match content {
         Content::Speech => vec![
-            (
-                "Speech 32 kbps (MP3)",
-                AudioSettings {
-                    speech: SpeechQuality::Kbps32,
-                    ..base
-                },
-            ),
-            (
-                "Speech 48 kbps (MP3)",
-                AudioSettings {
-                    speech: SpeechQuality::Kbps48,
-                    ..base
-                },
-            ),
-            (
-                "Smallest (Opus 24 kbps)",
-                AudioSettings {
-                    mode: Mode::Smallest,
-                    ..base
-                },
-            ),
+            AudioSettings {
+                speech: SpeechQuality::Kbps32,
+                ..keep
+            },
+            AudioSettings {
+                speech: SpeechQuality::Kbps48,
+                ..keep
+            },
+            smallest,
         ],
         Content::Music => vec![
-            (
-                "Music Standard (MP3)",
-                AudioSettings {
-                    music: MusicQuality::Standard,
-                    ..base
-                },
-            ),
-            (
-                "Music Smaller (MP3)",
-                AudioSettings {
-                    music: MusicQuality::Smaller,
-                    ..base
-                },
-            ),
-            (
-                "Smallest (Opus)",
-                AudioSettings {
-                    mode: Mode::Smallest,
-                    ..base
-                },
-            ),
+            AudioSettings {
+                music: MusicQuality::Standard,
+                ..keep
+            },
+            AudioSettings {
+                music: MusicQuality::Smaller,
+                ..keep
+            },
+            smallest,
         ],
     }
+}
+
+/// A label that says what the sample really is: codec, bitrate, channels.
+pub fn label(target: &AudioTarget) -> String {
+    let codec = match target.encoding {
+        Encoding::Mp3Cbr { kbps } => format!("MP3 {kbps} kbps"),
+        Encoding::Mp3Vbr { approx_kbps, .. } => format!("MP3 about {approx_kbps} kbps"),
+        Encoding::Aac { kbps } => format!("AAC {kbps} kbps"),
+        Encoding::Opus { kbps } => format!("Opus {kbps} kbps"),
+        Encoding::Flac => "FLAC (lossless)".to_string(),
+    };
+    let channels = match target.channels {
+        1 => "mono".to_string(),
+        2 => "stereo".to_string(),
+        n => format!("{n} channels"),
+    };
+    format!("{codec}, {channels}")
+}
+
+/// The sample targets, one per distinct encoding, in preset order.
+fn targets(probe: &AudioProbe, content: Content, base: AudioSettings) -> Vec<AudioTarget> {
+    // Music is judged as music even when a single file looks like speech.
+    let inputs = AudioInputs {
+        content: match content {
+            Content::Speech => ContentOverride::Speech,
+            Content::Music => ContentOverride::Music,
+        },
+    };
+    let mut out: Vec<AudioTarget> = Vec::new();
+    for settings in variants(content, base) {
+        if let AudioDecision::Compress(t) = plan_audio(probe, &settings, inputs)
+            && !out.iter().any(|o| {
+                (o.encoding, o.channels, o.sample_rate) == (t.encoding, t.channels, t.sample_rate)
+            })
+        {
+            out.push(t);
+        }
+    }
+    out
 }
 
 fn ext_for(encoding: Encoding) -> &'static str {
@@ -86,7 +113,8 @@ fn ext_for(encoding: Encoding) -> &'static str {
 }
 
 /// Encode the samples into `out_dir` (emptied first). Presets that would
-/// not make this file smaller are left out.
+/// not make this file smaller are left out, and presets that produce the
+/// same encoding are encoded once.
 pub async fn compare(
     ff: &Ffmpeg,
     input: &Path,
@@ -121,23 +149,15 @@ pub async fn compare(
         content,
         estimated_size: 0,
     };
-    let mut targets = vec![("Original".to_string(), original)];
-    for (label, settings) in variants(content) {
-        // Music is judged as music even when a single file looks like speech.
-        let inputs = AudioInputs {
-            content: match content {
-                Content::Speech => ContentOverride::Speech,
-                Content::Music => ContentOverride::Music,
-            },
-            dual_mono: false,
-        };
-        if let AudioDecision::Compress(t) = plan_audio(&probe, &settings, inputs) {
-            targets.push((label.to_string(), t));
-        }
-    }
+    let mut all = vec![("Original".to_string(), original)];
+    all.extend(
+        targets(&probe, content, AudioSettings::default())
+            .into_iter()
+            .map(|t| (label(&t), t)),
+    );
 
     let mut samples = Vec::new();
-    for (i, (label, target)) in targets.into_iter().enumerate() {
+    for (i, (label, target)) in all.into_iter().enumerate() {
         let out = out_dir.join(format!(
             "{i}-{}.{}",
             target.encoding.preset(),
@@ -166,4 +186,112 @@ pub async fn compare(
         });
     }
     Ok(samples)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plan::LosslessAction;
+    use crate::probe::AudioCodec;
+
+    fn probe(codec: AudioCodec, rate: u32, channels: u8, kbps: u64) -> AudioProbe {
+        AudioProbe {
+            codec,
+            sample_rate: Some(rate),
+            channels: Some(channels),
+            duration_secs: Some(3600.0),
+            size: kbps * 1000 * 3600 / 8,
+            picture_bytes: 0,
+            has_video: false,
+            audio_tracks: 1,
+            marker: None,
+        }
+    }
+
+    fn labels(p: &AudioProbe) -> Vec<String> {
+        let content = classify(p, ContentOverride::Auto);
+        targets(p, content, AudioSettings::default())
+            .iter()
+            .map(label)
+            .collect()
+    }
+
+    #[test]
+    fn labels_follow_the_real_encoding() {
+        // AAC speech stays AAC 64 kbps whatever the MP3 setting: one sample.
+        assert_eq!(
+            labels(&probe(AudioCodec::Aac, 22_050, 1, 128)),
+            ["AAC 64 kbps, mono", "Opus 24 kbps, mono"]
+        );
+        assert_eq!(
+            labels(&probe(AudioCodec::Mp3, 22_050, 1, 128)),
+            [
+                "MP3 32 kbps, mono",
+                "MP3 48 kbps, mono",
+                "Opus 24 kbps, mono"
+            ]
+        );
+        assert_eq!(
+            labels(&probe(AudioCodec::Mp3, 44_100, 2, 320)),
+            [
+                "MP3 about 165 kbps, stereo",
+                "MP3 about 115 kbps, stereo",
+                "Opus 96 kbps, stereo"
+            ]
+        );
+        // AAC music: both MP3 music presets give AAC 128 kbps.
+        assert_eq!(
+            labels(&probe(AudioCodec::Aac, 44_100, 2, 256)),
+            ["AAC 128 kbps, stereo", "Opus 96 kbps, stereo"]
+        );
+        // Opus in Keep format and in Smallest is the same encoding.
+        assert_eq!(
+            labels(&probe(AudioCodec::Opus, 48_000, 2, 256)),
+            ["Opus 96 kbps, stereo"]
+        );
+        // Stereo speech keeps both channels.
+        assert_eq!(
+            labels(&probe(AudioCodec::Mp3, 22_050, 2, 192)),
+            [
+                "MP3 64 kbps, stereo",
+                "MP3 96 kbps, stereo",
+                "Opus 48 kbps, stereo"
+            ]
+        );
+        // Lossless to FLAC is the same for every preset: encoded once.
+        let flac = AudioSettings {
+            lossless: LosslessAction::Flac,
+            ..AudioSettings::default()
+        };
+        let wav = probe(AudioCodec::Pcm, 44_100, 2, 1411);
+        let t = targets(&wav, Content::Music, flac);
+        assert_eq!(t.len(), 1);
+        assert_eq!(label(&t[0]), "FLAC (lossless), stereo");
+    }
+
+    #[test]
+    fn labels_are_unique() {
+        for p in [
+            probe(AudioCodec::Aac, 22_050, 1, 128),
+            probe(AudioCodec::Aac, 44_100, 2, 256),
+            probe(AudioCodec::Opus, 48_000, 2, 256),
+            probe(AudioCodec::Mp3, 22_050, 2, 192),
+            probe(AudioCodec::Pcm, 44_100, 2, 1411),
+        ] {
+            let l = labels(&p);
+            let mut unique = l.clone();
+            unique.sort();
+            unique.dedup();
+            assert_eq!(l.len(), unique.len(), "{p:?}: {l:?}");
+        }
+    }
+
+    #[test]
+    fn samples_follow_the_channel_and_track_policy() {
+        let surround = probe(AudioCodec::Pcm, 48_000, 6, 4608);
+        assert!(labels(&surround).is_empty(), "6 channels are kept");
+        let mut two = probe(AudioCodec::Aac, 44_100, 2, 256);
+        two.audio_tracks = 2;
+        assert!(labels(&two).is_empty(), "second track is kept");
+    }
 }

@@ -9,7 +9,7 @@ An optional setting that shrinks audio and video on the user's computer before u
 ## Summary of the method
 
 1. **Probe** each file (codec, duration, real bitrate, channels, sample rate, resolution).
-2. **Classify** it: speech or music, real stereo or duplicated mono, already compressed or not.
+2. **Classify** it: speech or music, already compressed or not, and whether every track in the file can be kept.
 3. **Pick a target** from a bitrate ladder that never raises quality settings above the source.
 4. **Test a 30 second sample** before spending minutes on a long file.
 5. **Encode** with FFmpeg to a temp file, **verify** it, and **upload the smaller file** (or the original if compression did not pay off).
@@ -63,28 +63,36 @@ Listening samples of every option were produced for the user to choose the defau
 ### Classify
 
 - **Speech or music**: speech if mono, or sample rate 24 kHz or lower, or real bitrate 64 kbps or lower; otherwise music. The user can override per upload ("Treat as speech / music").
-- **Duplicated stereo**: for stereo files, a 30 second sample is checked with `pan=mono|c0=c0-c1,astats`. If left and right are identical (difference below -60 dB), the file is encoded as mono, halving the bitrate without any quality loss.
+- **Channels**: kept as they are unless the downmix setting allows it (`allowDownmix`, off by default; Settings does not show it yet). The automatic duplicated-stereo check (a 30 second sample from the middle) was removed after 0.4.1: a sample cannot prove the channels match over the whole file, and a mono mix erases sound that differs between channels (a test file with opposite intro channels lost its intro entirely). Keeping the channels costs some saving; it never loses content.
 - **Lossless source** (WAV, AIFF, FLAC, ALAC): always worth compressing; the only question is the format (see WAV setting).
 
 ### Bitrate ladder (Keep format)
 
 | Content | Codec | Target | Sample rate |
 |---|---|---|---|
-| Speech | MP3 (LAME), mono | 32 kbps | 22.05 kHz |
-| Speech, higher quality | MP3 (LAME), mono | 48 kbps | 22.05 kHz |
+| Speech | MP3 (LAME) | 32 kbps mono, 64 kbps stereo | 22.05 kHz |
+| Speech, higher quality | MP3 (LAME) | 48 kbps mono, 96 kbps stereo | 22.05 kHz |
 | Music | MP3 (LAME), VBR quality 4 (about 165 kbps) | | 44.1 kHz |
 | Music, smaller | MP3 (LAME), VBR quality 6 (about 115 kbps) | | 44.1 kHz |
 | AAC source | AAC, same channels | 64 kbps speech / 128 kbps music | unchanged |
 
-Smallest mode: speech becomes Opus 24 kbps mono (`-application voip`), music becomes Opus 96 kbps stereo.
+Smallest mode: speech becomes Opus 24 kbps mono or 48 kbps stereo (`-application voip`), music becomes Opus 96 kbps stereo (64 kbps mono).
 
-The target is always capped at the source: R2Dock never raises bitrate, sample rate, or channel count.
+The target is always capped at the source: R2Dock never raises bitrate, sample rate, or channel count. It lowers the channel count only when the user allows downmix: then multichannel audio becomes stereo (mono for speech) and stereo speech becomes mono. Without that permission, audio with more than two channels is uploaded unchanged ("6-channel audio kept"), checked before any speech or music rule.
 
 ### Keep everything that matters
 
 - Tags and cover art: `-map_metadata 0` and the attached picture stream copied (`-map 0:v? -c:v copy`), ID3v2.3 for MP3.
 - Chapters: kept for M4A/M4B audiobooks (`-map_chapters 0`). MP3 chapter frames are kept where FFmpeg supports them; a file whose chapters would be lost is uploaded unchanged unless the user allows it.
 - Gapless playback: LAME writes encoder delay and padding in the Xing/LAME header.
+
+### Keep every track
+
+FFmpeg encodes one audio track on the audio path and one video track on the video path, so a file is only compressed when that loses nothing (`crates/r2dock-media/src/streams.rs`):
+
+- **Before planning**, every stream is listed (ffprobe, or the in-process probe's track count when ffprobe is missing). An audio file with a second audio track, a video file with a second video track (cover art does not count), subtitles that cannot be converted to `mov_text` (image subtitles, TTML, anything unknown), attachments, or unknown data tracks is uploaded unchanged with the reason "Has tracks that would be lost".
+- **After encoding**, the output's streams are listed again and must match the plan: the same number of video, audio, and subtitle tracks, each audio track with the planned channels and the source's language. A copy that does not match is deleted and the original is uploaded ("Compressed copy lost a track"). This is not a compression failure, so it never stops the upload, whatever "If compression fails" says.
+- **Exceptions**, by design: cover art is not a video track (it is kept in MP3, M4A, and FLAC, not in Opus or in video files); timecode, Apple camera metadata, and the QuickTime chapter track are not content (chapters are copied with `-map_chapters`).
 
 ## Already compressed files are left alone
 
@@ -130,7 +138,7 @@ Hardware encoders use their constant-quality mode where available (`-q:v` for Vi
 - **Rotation** (phone videos): the rotation tag is honored so the output is not sideways.
 - **Variable frame rate** (phone and screen recordings): kept as-is (`-fps_mode passthrough`), never forced to a fixed rate.
 - **Already efficient** (HEVC or AV1 source, or H.264 already below the target): uploaded unchanged.
-- **Subtitles and extra audio tracks**: all audio tracks are kept; text subtitles are converted to `mov_text`; image subtitles or data streams that MP4 cannot hold mean the file is uploaded unchanged.
+- **Subtitles and extra audio tracks**: all audio tracks are kept; text subtitles are converted to `mov_text`; a second video track, any other subtitle (image, TTML, unknown), or a data stream that MP4 cannot hold means the file is uploaded unchanged (see "Keep every track").
 - **Audio-only MP4/M4A**: treated as audio.
 - **Very short clips** (under 10 seconds) and **tiny files** (under 1 MB): uploaded unchanged; the overhead is not worth it.
 
@@ -152,7 +160,8 @@ Hardware encoders use their constant-quality mode where available (`-q:v` for Vi
 | Huge folder (thousands of files) | Probes are cheap and in-process; encodes are queued with bounded concurrency |
 | Not enough disk space for the temp file | Checked before encoding (1.2x estimated output); falls back to the original with a notice |
 | WAV, AIFF, FLAC, ALAC sources | Compressed per the WAV setting (MP3, FLAC, or keep) |
-| 8-bit, 24-bit, 32-bit float, or multichannel WAV | Converted correctly; 5.1 audio downmixed to stereo only if the user allows it, otherwise kept |
+| 8-bit, 24-bit, 32-bit float, or multichannel WAV | Converted correctly; 5.1 audio downmixed only if the user allows it, otherwise uploaded unchanged (or kept as FLAC with all channels) |
+| Second audio track, second video track, TTML or image subtitles | Uploaded unchanged; nothing is dropped |
 | Variable-bitrate MP3 with a misleading header | Real bitrate from size and duration |
 | Cover art, tags, chapters | Kept; files whose chapters would be lost are uploaded unchanged unless allowed |
 | Already compressed by R2Dock | Detected by marker and skipped |
@@ -311,3 +320,9 @@ Changes from the plan made during step 6 (measurements in [docs/benchmarks/2026-
 - Quality comes from constant-quality modes (CRF and hardware quality settings); the estimate uses measured bitrates scaled by picture size and frame rate, and the sample test makes the final call.
 - Kept: every audio track (AAC 128 kbps, copied when already AAC at about that rate or less), text subtitles as `mov_text`, chapters, tags, rotation (applied by FFmpeg), variable frame rate. Dropped safely: timecode and Apple metadata tracks. Left unchanged: HDR, image subtitles, attachments, unknown data tracks (for example GoPro telemetry), cover art in video files is not kept.
 - HEVC is not offered, and 10-bit HDR is not converted.
+
+Changes after 0.4.1 (content preservation):
+
+- Stream inventory before planning and after encoding (see "Keep every track"). Files with a second audio or video track or unconvertible subtitles, which earlier versions compressed while dropping those tracks, are now uploaded unchanged. A copy whose tracks do not match the plan is replaced by the original with a reason, not a failure.
+- Channels are never reduced without the downmix setting. The sampled duplicated-stereo check is gone, the multichannel check runs before the speech rule (six-channel 22.05 kHz audio was planned as mono), and stereo speech stays stereo at twice the mono bitrate.
+- Compare quality labels each sample by what it really is (for example "AAC 64 kbps, mono"), and presets that produce the same encoding share one sample. Before, an M4A got two "MP3" labels on two identical AAC encodes.

@@ -10,6 +10,8 @@ export type AudioSettings = { mode: Mode, speech: SpeechQuality, music: MusicQua
  */
 minSavingPercent: number, 
 /**
- * Allow 5.1 and other multichannel audio to be mixed down to stereo.
+ * Allow fewer channels: 5.1 and other multichannel audio mixed down to
+ * stereo (or mono for speech), and stereo speech mixed to mono. Off by
+ * default, so every channel is kept.
  */
 allowDownmix: boolean, };

@@ -1,6 +1,6 @@
 //! The video branch of the pipeline: probe, plan, sample test, disk space,
-//! encode (with one software retry after a hardware failure), verify, and
-//! the final size check.
+//! encode (with one software retry after a hardware failure), verify, the
+//! track inventory check, and the final size check.
 
 use std::path::Path;
 
@@ -8,9 +8,11 @@ use tokio_util::sync::CancellationToken;
 
 use super::args::encode_video;
 use super::plan::{H264Encoder, VideoEncoder, VideoTarget, plan_video};
-use super::probe::probe_video;
+use super::probe::{VideoProbe, probe_video};
 use crate::ffmpeg::{EncodeError, Ffmpeg, SAMPLE_TEST_MIN_SECS, middle_window};
 use crate::pipeline::{Compressed, PrepareJob, Prepared, Unchanged};
+use crate::plan::SkipReason;
+use crate::streams::{Expected, ExpectedAudio, check};
 use crate::verify::{VerifyError, duration_tolerance};
 
 /// Free space needed for the output: 1.2 times the estimate.
@@ -33,20 +35,37 @@ fn percent(saving: f64) -> u8 {
     p
 }
 
+/// The tracks the output must hold: the video, every planned audio track
+/// with its channels and language, and every planned subtitle.
+fn expected(source: &VideoProbe, target: &VideoTarget) -> Expected {
+    let audio = target
+        .audio
+        .iter()
+        .filter_map(|(index, _)| source.streams.iter().find(|s| s.index == *index))
+        .map(|s| ExpectedAudio::from_source(s, (s.channels > 0).then_some(s.channels)))
+        .collect();
+    Expected {
+        video: 1,
+        audio,
+        subtitles: target.subtitles.len(),
+    }
+}
+
+/// The output opens, holds the encoder's codec, and is as long as the
+/// source. Its probe is returned for the inventory check.
 async fn verify(
     ffprobe: &Path,
     output: &Path,
-    target: &VideoTarget,
     encoder: VideoEncoder,
     expected_secs: f64,
-) -> Result<u64, EncodeError> {
+) -> Result<VideoProbe, EncodeError> {
     let probe = probe_video(ffprobe, output)
         .await
         .ok_or(EncodeError::Verify(VerifyError::Unreadable))?;
     let video = probe
         .video()
         .ok_or(EncodeError::Verify(VerifyError::WrongCodec))?;
-    if video.codec != encoder.codec_name() || probe.audio().count() != target.audio.len() {
+    if video.codec != encoder.codec_name() {
         return Err(EncodeError::Verify(VerifyError::WrongCodec));
     }
     let got = probe
@@ -58,7 +77,7 @@ async fn verify(
             got,
         }));
     }
-    Ok(probe.size)
+    Ok(probe)
 }
 
 /// Encode once with `encoder`; delete the output on any failure.
@@ -70,7 +89,7 @@ async fn encode_once(
     encoder: VideoEncoder,
     cancel: &CancellationToken,
     on_fraction: &mut (dyn FnMut(f64) + Send),
-) -> Result<u64, EncodeError> {
+) -> Result<VideoProbe, EncodeError> {
     let duration = target.duration_secs;
     let Some(ffprobe) = &ff.ffprobe else {
         return Err(EncodeError::Failed("ffprobe is missing".into()));
@@ -86,7 +105,7 @@ async fn encode_once(
         })
         .await;
     let result = match result {
-        Ok(_) => verify(ffprobe, output, target, encoder, duration).await,
+        Ok(_) => verify(ffprobe, output, encoder, duration).await,
         Err(e) => Err(e),
     };
     if result.is_err() {
@@ -190,7 +209,16 @@ pub async fn prepare_video(
         )
         .await;
     }
-    let size = size?;
+    let encoded = size?;
+    // Every planned track must be there; a copy that lost one is not used,
+    // and the original is uploaded instead.
+    if check(&encoded, &expected(&probe, &target)).is_err() {
+        let _ = std::fs::remove_file(&output);
+        return Ok(Prepared::Unchanged(Unchanged::Plan {
+            reason: SkipReason::TracksNotKept,
+        }));
+    }
+    let size = encoded.size;
     #[allow(clippy::cast_precision_loss)]
     let saving = 100.0 * (1.0 - size as f64 / probe.size.max(1) as f64);
     if saving < margin {

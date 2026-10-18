@@ -49,6 +49,90 @@ fn probe_real_files() {
     }
 }
 
+/// Real files through the whole pipeline: a compressed copy holds the same
+/// video, audio, and subtitle tracks as the original and never fewer audio
+/// channels unless downmix is allowed. Skips when `R2DOCK_MEDIA_SAMPLES` or
+/// FFmpeg is missing. Read only: copies go to a temporary folder.
+/// `R2DOCK_MEDIA_SAMPLES="a.m4b:b.mkv" R2DOCK_TEST_FFMPEG=... cargo test -p
+/// r2dock-media --release --test real_files real_files_keep_their_tracks`
+#[tokio::test(flavor = "multi_thread")]
+async fn real_files_keep_their_tracks() {
+    use r2dock_media::classify::ContentOverride;
+    use r2dock_media::ffmpeg::Ffmpeg;
+    use r2dock_media::pipeline::{PrepareJob, Prepared, prepare};
+    use r2dock_media::video::plan::VideoEncoders;
+    use r2dock_media::video::probe::{StreamKind, VideoProbe, probe_video};
+    use tokio_util::sync::CancellationToken;
+
+    let paths = samples();
+    let Some(bin) = std::env::var_os("R2DOCK_TEST_FFMPEG").map(std::path::PathBuf::from) else {
+        eprintln!("R2DOCK_TEST_FFMPEG not set; skipping");
+        return;
+    };
+    if paths.is_empty() {
+        eprintln!("R2DOCK_MEDIA_SAMPLES not set; skipping");
+        return;
+    }
+    let ffprobe = bin.with_file_name(if cfg!(windows) {
+        "ffprobe.exe"
+    } else {
+        "ffprobe"
+    });
+    let out = std::process::Command::new(&bin)
+        .args(["-hide_banner", "-encoders"])
+        .output()
+        .unwrap();
+    let listed = r2dock_media::tools::detect::parse_encoders(&String::from_utf8_lossy(&out.stdout));
+    let encoders: VideoEncoders = r2dock_media::video::encoders::detect(&bin, &listed).await;
+    let ff = Ffmpeg::new(bin).with_video(ffprobe.clone(), encoders);
+    let count = |p: &VideoProbe, kind: StreamKind| {
+        p.streams
+            .iter()
+            .filter(|s| s.kind == kind && !s.attached_pic)
+            .count()
+    };
+    for (n, path) in paths.iter().enumerate() {
+        let input = Path::new(path);
+        let work = tempfile::tempdir().unwrap();
+        let source = probe_video(&ffprobe, input).await.unwrap();
+        let prepared = prepare(
+            &ff,
+            PrepareJob {
+                input,
+                work_dir: work.path(),
+                stem: "job",
+                settings: &AudioSettings::default(),
+                video: &r2dock_core::compression::VideoSettings::default(),
+                content: ContentOverride::Auto,
+            },
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        // File names stay out of the log; the sample number is enough.
+        let Prepared::Compressed(c) = prepared else {
+            eprintln!("sample {n}: unchanged: {prepared:?}");
+            continue;
+        };
+        let output = probe_video(&ffprobe, &c.output).await.unwrap();
+        for kind in [StreamKind::Video, StreamKind::Audio, StreamKind::Subtitle] {
+            assert_eq!(
+                count(&output, kind.clone()),
+                count(&source, kind.clone()),
+                "sample {n}: {kind:?}"
+            );
+        }
+        for (a, b) in output.audio().zip(source.audio()) {
+            assert_eq!(a.channels, b.channels, "sample {n}: channels");
+        }
+        eprintln!(
+            "sample {n}: {} -> {} bytes, tracks kept",
+            c.original_size, c.size
+        );
+    }
+}
+
 /// Full pipeline on real files: plan, sample test, full encode, verify.
 /// `R2DOCK_MEDIA_OUT` is the folder for the compressed copies.
 #[tokio::test(flavor = "multi_thread")]

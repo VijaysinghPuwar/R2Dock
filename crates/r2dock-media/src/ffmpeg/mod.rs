@@ -1,5 +1,5 @@
 //! Running FFmpeg: arguments, progress, the process runner, and the
-//! operations built on them (full encode, sample test, channel check).
+//! operations built on them (full encode and sample test).
 
 pub mod args;
 pub mod progress;
@@ -15,12 +15,10 @@ use crate::verify::{VerifyError, verify_audio};
 use args::{ArgsError, Window};
 use run::{RunError, RunOptions, sanitize};
 
-/// Length of the sample encoded before a long file, and of the channel check.
+/// Length of the sample encoded before a long file.
 pub const SAMPLE_SECS: f64 = 30.0;
 /// Files longer than this get a sample test first.
 pub const SAMPLE_TEST_MIN_SECS: f64 = 300.0;
-/// Left minus right below this level means the channels are identical.
-const SAME_CHANNELS_DB: f64 = -60.0;
 
 #[derive(Debug, Error)]
 pub enum EncodeError {
@@ -151,19 +149,6 @@ impl Ffmpeg {
         let saving = 100.0 * (1.0 - projected / source_size.max(1) as f64);
         Ok(saving.clamp(0.0, 100.0))
     }
-
-    /// Whether the left and right channels of a stereo file are identical
-    /// (checked on a sample from the middle).
-    pub async fn is_dual_mono(
-        &self,
-        input: &Path,
-        duration_secs: f64,
-        cancel: &CancellationToken,
-    ) -> Result<bool, EncodeError> {
-        let args = args::channel_difference(input, middle_window(duration_secs))?;
-        let lines = self.run_clean(&args, &[input], cancel, |_| {}).await?;
-        Ok(max_volume(&lines).is_some_and(|db| db < SAME_CHANNELS_DB))
-    }
 }
 
 /// A sample window in the middle of the file (the whole file if short).
@@ -180,20 +165,6 @@ pub fn middle_window(duration_secs: f64) -> Window {
     }
 }
 
-/// `max_volume` from FFmpeg's volumedetect log lines, in dB (`-inf` is
-/// negative infinity).
-fn max_volume(lines: &[String]) -> Option<f64> {
-    lines.iter().rev().find_map(|l| {
-        let rest = l.split("max_volume:").nth(1)?;
-        let value = rest.trim().trim_end_matches("dB").trim();
-        if value == "-inf" {
-            Some(f64::NEG_INFINITY)
-        } else {
-            value.parse().ok()
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,21 +177,5 @@ mod tests {
         let short = middle_window(12.0);
         assert_eq!(short.start_secs, 0.0);
         assert!((short.len_secs - 12.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn parses_max_volume() {
-        let lines = |s: &str| s.lines().map(str::to_string).collect::<Vec<_>>();
-        assert_eq!(
-            max_volume(&lines(
-                "[Parsed_volumedetect_1 @ 0x1] mean_volume: -91.0 dB\n[Parsed_volumedetect_1 @ 0x1] max_volume: -inf dB"
-            )),
-            Some(f64::NEG_INFINITY)
-        );
-        assert_eq!(
-            max_volume(&lines("[Parsed_volumedetect_1 @ 0x1] max_volume: -12.5 dB")),
-            Some(-12.5)
-        );
-        assert_eq!(max_volume(&lines("nothing")), None);
     }
 }

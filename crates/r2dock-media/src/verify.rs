@@ -1,5 +1,7 @@
 //! Check an encoded file before it replaces the original in an upload:
 //! it must open, hold the expected codec, and last as long as the source.
+//! A copy that opens but lost a track or a channel is not a failure: the
+//! pipeline checks it with `streams` and uploads the original instead.
 
 use std::path::Path;
 
@@ -18,6 +20,10 @@ pub enum VerifyError {
     WrongCodec,
     #[error("the compressed file is {got:.1} s long instead of {expected:.1} s")]
     WrongDuration { expected: f64, got: f64 },
+    #[error("the compressed file does not hold the same tracks as the original")]
+    StreamsChanged,
+    #[error("the compressed file has {got} audio channels instead of {expected}")]
+    WrongChannels { expected: u32, got: u32 },
 }
 
 /// The codec an encoding produces.

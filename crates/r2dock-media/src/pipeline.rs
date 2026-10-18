@@ -1,5 +1,5 @@
 //! The whole decision for one file, cheapest checks first:
-//! probe, duplicated-stereo check, plan, sample test, disk space, encode,
+//! probe, track inventory, plan, sample test, disk space, encode, verify,
 //! and the final size check. Anything that does not pay off leaves the file
 //! unchanged with a reason the interface can show.
 
@@ -16,6 +16,8 @@ use crate::plan::{
     AudioDecision, AudioInputs, AudioSettings, AudioTarget, Encoding, SkipReason, plan_audio,
 };
 use crate::probe::{ProbeError, probe_audio};
+use crate::streams::{Expected, ExpectedAudio, audio_only_supported, check};
+use crate::video::probe::probe_video;
 
 /// Free space needed for the output: 1.2 times the estimate.
 const SPACE_FACTOR: f64 = 1.2;
@@ -123,15 +125,14 @@ pub async fn prepare(
     let video_candidate = crate::video::run::is_video_candidate(input);
     // Video containers are checked with ffprobe first: the in-process
     // audio probe may see only the audio track of a video file.
-    if video_candidate
-        && let Some(ffprobe) = &ff.ffprobe
-        && crate::video::probe::probe_video(ffprobe, input)
-            .await
-            .is_some_and(|p| p.video().is_some())
-    {
-        return crate::video::run::prepare_video(ff, job, cancel, on_fraction).await;
+    let mut inventory = None;
+    if video_candidate && let Some(ffprobe) = &ff.ffprobe {
+        inventory = probe_video(ffprobe, input).await;
+        if inventory.as_ref().is_some_and(|p| p.video().is_some()) {
+            return crate::video::run::prepare_video(ff, job, cancel, on_fraction).await;
+        }
     }
-    let probe = match tokio::task::spawn_blocking(move || probe_audio(&path)).await {
+    let mut probe = match tokio::task::spawn_blocking(move || probe_audio(&path)).await {
         // Audio-only MP4 and M4A stay on the audio path.
         Ok(Ok(p)) if !p.has_video => p,
         Ok(Ok(_)) => return crate::video::run::prepare_video(ff, job, cancel, on_fraction).await,
@@ -149,29 +150,30 @@ pub async fn prepare(
     };
     let duration = probe.duration_secs.unwrap_or(0.0);
 
-    // Only stereo lossy or lossless music benefits; speech becomes mono anyway.
-    let first = plan_audio(
-        &probe,
-        settings,
-        AudioInputs {
-            content,
-            dual_mono: false,
-        },
-    );
-    let dual_mono = match &first {
-        AudioDecision::Compress(t)
-            if probe.channels == Some(2) && t.channels == 2 && t.encoding != Encoding::Flac =>
-        {
-            ff.is_dual_mono(input, duration, cancel).await?
+    // Every track in the file, before planning: the audio path keeps one
+    // audio track, cover art, and chapters, and nothing else. Without
+    // ffprobe the in-process probe's track count is the check.
+    if inventory.is_none()
+        && let Some(ffprobe) = &ff.ffprobe
+    {
+        inventory = probe_video(ffprobe, input).await;
+    }
+    let source_audio = inventory.as_ref().and_then(|i| i.audio().next().cloned());
+    if let Some(inv) = &inventory {
+        if !audio_only_supported(inv) {
+            return Ok(Prepared::Unchanged(Unchanged::Plan {
+                reason: SkipReason::UnsupportedStreams,
+            }));
         }
-        _ => false,
-    };
-    let decision = if dual_mono {
-        plan_audio(&probe, settings, AudioInputs { content, dual_mono })
-    } else {
-        first
-    };
-    let target = match decision {
+        if probe.channels.is_none() {
+            probe.channels = source_audio
+                .as_ref()
+                .and_then(|a| u8::try_from(a.channels).ok())
+                .filter(|c| *c > 0);
+        }
+    }
+
+    let target = match plan_audio(&probe, settings, AudioInputs { content }) {
         AudioDecision::Compress(t) => t,
         AudioDecision::Skip(reason) => return Ok(Prepared::Unchanged(Unchanged::Plan { reason })),
     };
@@ -209,6 +211,29 @@ pub async fn prepare(
     let result = ff
         .encode(input, &output, &target, duration, cancel, on_fraction)
         .await?;
+    // The output must hold exactly what was promised: one audio track with
+    // the planned channels and the source's language. A copy that lost
+    // something is not a failure: the original is uploaded instead.
+    let mut kept = result.audio_tracks == 1 && result.channels.is_none_or(|c| c == target.channels);
+    if kept && let Some(ffprobe) = &ff.ffprobe {
+        let expected = Expected {
+            video: 0,
+            audio: vec![ExpectedAudio {
+                channels: Some(u32::from(target.channels)),
+                language: source_audio.map(|a| a.language).unwrap_or_default(),
+            }],
+            subtitles: 0,
+        };
+        kept = probe_video(ffprobe, &output)
+            .await
+            .is_some_and(|out| check(&out, &expected).is_ok());
+    }
+    if !kept {
+        let _ = std::fs::remove_file(&output);
+        return Ok(Prepared::Unchanged(Unchanged::Plan {
+            reason: SkipReason::TracksNotKept,
+        }));
+    }
     #[allow(clippy::cast_precision_loss)]
     let saving = 100.0 * (1.0 - result.size as f64 / probe.size.max(1) as f64);
     if saving < margin {

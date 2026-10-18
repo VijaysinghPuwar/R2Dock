@@ -21,8 +21,6 @@ pub use r2dock_core::compression::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AudioInputs {
     pub content: ContentOverride,
-    /// Left and right are identical (found by a sample check with FFmpeg).
-    pub dual_mono: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,12 +100,16 @@ pub enum SkipReason {
     VideoOff,
     /// HDR video (converting it would wash out the colors).
     Hdr,
-    /// Image subtitles, attachments, or data tracks MP4 cannot hold.
+    /// Tracks the compressed copy could not keep: a second audio or video
+    /// track, subtitles that cannot be converted, attachments, or data.
     UnsupportedStreams,
     /// No working video encoder on this computer.
     NoVideoEncoder,
     /// Already in a codec as efficient as the target.
     AlreadyEfficient { codec: String },
+    /// The compressed copy did not hold every track or channel of the
+    /// original (checked after encoding), so the original is uploaded.
+    TracksNotKept,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,8 +141,9 @@ fn mp3_rate(wanted: u32, source: Option<u32>) -> u32 {
 }
 
 /// The ladder step for this content and settings, before any checks.
-/// `mono` is whether the output has one channel; music targets are about
-/// half the bitrate for mono.
+/// `mono` is whether the output has one channel. The speech and music
+/// targets are per output: stereo gets about twice the mono bitrate, so
+/// keeping both channels does not cost quality.
 fn ladder(
     probe: &AudioProbe,
     content: Content,
@@ -149,13 +152,18 @@ fn ladder(
 ) -> Result<(Encoding, Option<&'static str>), SkipReason> {
     use AudioCodec::*;
     let opus = |content| match (content, mono) {
-        (Content::Speech, _) => Encoding::Opus { kbps: 24 },
+        (Content::Speech, true) => Encoding::Opus { kbps: 24 },
+        (Content::Speech, false) => Encoding::Opus { kbps: 48 },
         (Content::Music, true) => Encoding::Opus { kbps: 64 },
         (Content::Music, false) => Encoding::Opus { kbps: 96 },
     };
     let mp3 = |content| match (content, s.speech, s.music) {
-        (Content::Speech, SpeechQuality::Kbps32, _) => Encoding::Mp3Cbr { kbps: 32 },
-        (Content::Speech, SpeechQuality::Kbps48, _) => Encoding::Mp3Cbr { kbps: 48 },
+        (Content::Speech, SpeechQuality::Kbps32, _) => Encoding::Mp3Cbr {
+            kbps: if mono { 32 } else { 64 },
+        },
+        (Content::Speech, SpeechQuality::Kbps48, _) => Encoding::Mp3Cbr {
+            kbps: if mono { 48 } else { 96 },
+        },
         (Content::Music, _, MusicQuality::Standard) => Encoding::Mp3Vbr {
             quality: 4,
             approx_kbps: if mono { 85 } else { 165 },
@@ -204,6 +212,10 @@ fn decide(
     if probe.has_video {
         return Err(SkipReason::Video);
     }
+    // FFmpeg encodes one audio track; a second one would be lost.
+    if probe.audio_tracks > 1 {
+        return Err(SkipReason::UnsupportedStreams);
+    }
     if let Some(preset) = &probe.marker {
         return Err(SkipReason::AlreadyCompressedByR2dock {
             preset: preset.clone(),
@@ -218,17 +230,21 @@ fn decide(
     }
     let content = classify(probe, inputs.content);
     let source_channels = probe.channels.unwrap_or(2);
-    let mono = content == Content::Speech || inputs.dual_mono || source_channels == 1;
+    // Channels are only ever reduced when the user allows it: a mono mix
+    // can erase sound that differs between channels. With permission,
+    // speech becomes mono and anything else at most stereo.
+    let mono = source_channels == 1 || (s.allow_downmix && content == Content::Speech);
     let (encoding, extension) = ladder(probe, content, mono, s)?;
     let channels = match encoding {
         // Lossless output keeps every channel.
         Encoding::Flac => source_channels,
-        _ if mono => 1,
+        // The veto comes before any other channel decision.
         _ if source_channels > 2 && !s.allow_downmix => {
             return Err(SkipReason::Multichannel {
                 channels: source_channels,
             });
         }
+        _ if mono => 1,
         _ => source_channels.min(2),
     };
     let sample_rate = match encoding {

@@ -38,6 +38,8 @@ pub struct StreamInfo {
     pub fps: Option<f64>,
     /// Data track handler or tag (for example `gpmd` for GoPro telemetry).
     pub tag: String,
+    /// Language tag (`eng`), empty when there is none.
+    pub language: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -124,6 +126,7 @@ struct RawSideData {
 struct RawTags {
     rotate: Option<String>,
     handler_name: Option<String>,
+    language: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -164,6 +167,7 @@ pub fn parse(json: &str) -> Option<VideoProbe> {
                 .unwrap_or(0.0);
             #[allow(clippy::cast_possible_truncation)]
             let rotation = rotation.round() as i32;
+            let language = s.tags.language.unwrap_or_default();
             let tag = if s.codec_tag_string.is_empty() || s.codec_tag_string.starts_with("[0]") {
                 s.tags.handler_name.unwrap_or_default()
             } else {
@@ -183,6 +187,7 @@ pub fn parse(json: &str) -> Option<VideoProbe> {
                 rotation,
                 fps: fraction(&s.avg_frame_rate),
                 tag,
+                language,
             }
         })
         .collect();

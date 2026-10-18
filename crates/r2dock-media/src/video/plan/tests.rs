@@ -16,6 +16,7 @@ fn stream(index: u32, kind: StreamKind, codec: &str) -> StreamInfo {
         rotation: 0,
         fps: None,
         tag: String::new(),
+        language: String::new(),
     }
 }
 
@@ -146,6 +147,20 @@ fn skips() {
     pgs.streams
         .push(stream(2, StreamKind::Subtitle, "hdmv_pgs_subtitle"));
     assert_eq!(run(&pgs, &s), Err(SkipReason::UnsupportedStreams));
+    for codec in ["ttml", "eia_608", "something_new"] {
+        let mut subs = web_video();
+        subs.streams.push(stream(2, StreamKind::Subtitle, codec));
+        assert_eq!(
+            run(&subs, &s),
+            Err(SkipReason::UnsupportedStreams),
+            "{codec}"
+        );
+    }
+    let mut two_cameras = web_video();
+    let mut second = two_cameras.streams[0].clone();
+    second.index = 2;
+    two_cameras.streams.push(second);
+    assert_eq!(run(&two_cameras, &s), Err(SkipReason::UnsupportedStreams));
     let mut gopro = web_video();
     let mut data = stream(2, StreamKind::Data, "bin_data");
     data.tag = "gpmd".into();

@@ -63,6 +63,7 @@ mod tests {
             size: kbps * 1000 * 1000 / 8,
             picture_bytes: 0,
             has_video: false,
+            audio_tracks: 1,
             marker: None,
         }
     }

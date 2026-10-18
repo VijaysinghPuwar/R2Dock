@@ -65,6 +65,10 @@ pub struct AudioProbe {
     pub picture_bytes: u64,
     /// The file contains a video track (handled by the video path).
     pub has_video: bool,
+    /// Audio tracks in the file. Only files with exactly one are compressed:
+    /// FFmpeg encodes one track, and a second (another language, a
+    /// commentary) would be lost.
+    pub audio_tracks: usize,
     /// Preset from an R2Dock marker tag, if present.
     pub marker: Option<String>,
 }
@@ -169,6 +173,11 @@ pub fn probe_audio(path: &Path) -> Result<AudioProbe, ProbeError> {
         .tracks()
         .iter()
         .any(|t| matches!(t.codec_params, Some(CodecParameters::Video(_))));
+    let audio_tracks = reader
+        .tracks()
+        .iter()
+        .filter(|t| matches!(t.codec_params, Some(CodecParameters::Audio(_))))
+        .count();
     let track = reader
         .tracks()
         .iter()
@@ -194,6 +203,7 @@ pub fn probe_audio(path: &Path) -> Result<AudioProbe, ProbeError> {
         size,
         picture_bytes: 0,
         has_video,
+        audio_tracks,
         marker: None,
     };
     read_metadata(reader.as_mut(), &mut probe);
@@ -245,6 +255,7 @@ mod tests {
         let d = p.duration_secs.unwrap();
         assert!((d - 3.0).abs() < 0.01, "{d}");
         assert!(!p.has_video && p.marker.is_none());
+        assert_eq!(p.audio_tracks, 1);
         let kbps = p.real_bitrate().unwrap() / 1000;
         assert!((1411..=1413).contains(&kbps), "{kbps}");
     }

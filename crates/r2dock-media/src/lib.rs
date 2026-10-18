@@ -11,6 +11,7 @@ pub mod pipeline;
 pub mod plan;
 pub mod preview;
 pub mod probe;
+pub mod streams;
 pub mod tools;
 pub mod verify;
 pub mod video;

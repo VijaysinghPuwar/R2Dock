@@ -117,9 +117,8 @@ pub struct VideoTarget {
     pub duration_secs: f64,
 }
 
-/// Image subtitle codecs MP4 cannot hold.
-const IMAGE_SUBTITLES: [&str; 4] = ["hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"];
-/// Text subtitle codecs that convert to `mov_text`.
+/// Text subtitle codecs that convert to `mov_text`. Any other subtitle
+/// (image subtitles, TTML, anything unknown) keeps the original.
 const TEXT_SUBTITLES: [&str; 6] = ["mov_text", "subrip", "ass", "ssa", "webvtt", "text"];
 /// Data tracks that can be dropped safely (timecode, Apple metadata).
 const HARMLESS_DATA: [&str; 3] = ["tmcd", "mebx", "Core Media Metadata"];
@@ -195,9 +194,14 @@ pub fn plan_video(
     if matches!(video.color_transfer.as_str(), "smpte2084" | "arib-std-b67") {
         return Err(SkipReason::Hdr);
     }
+    // One video track is encoded; a second (another camera angle) would be
+    // lost. Cover art does not count.
+    if crate::streams::video_tracks(probe) > 1 {
+        return Err(SkipReason::UnsupportedStreams);
+    }
     for s in &probe.streams {
         let unsupported = match s.kind {
-            StreamKind::Subtitle => IMAGE_SUBTITLES.contains(&s.codec.as_str()),
+            StreamKind::Subtitle => !TEXT_SUBTITLES.contains(&s.codec.as_str()),
             StreamKind::Data => !HARMLESS_DATA.contains(&s.tag.as_str()),
             StreamKind::Attachment | StreamKind::Other => true,
             _ => false,

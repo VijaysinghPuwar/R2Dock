@@ -14,6 +14,7 @@ fn probe(codec: AudioCodec, rate: u32, channels: u8, kbps: u64, secs: f64) -> Au
         size,
         picture_bytes: 0,
         has_video: false,
+        audio_tracks: 1,
         marker: None,
     }
 }
@@ -149,21 +150,72 @@ fn music_mp3() {
 }
 
 #[test]
-fn duplicated_stereo_becomes_mono() {
-    let p = song(AudioCodec::Mp3, 128, 2);
-    let inputs = AudioInputs {
-        dual_mono: true,
-        ..AudioInputs::default()
-    };
-    let t = target(plan_audio(&p, &settings(), inputs));
-    assert_eq!(t.channels, 1);
+fn channels_are_kept_unless_downmix_is_allowed() {
+    // Stereo speech (22.05 kHz) stays stereo, at twice the mono bitrate.
+    let stereo_talk = probe(AudioCodec::Mp3, 22_050, 2, 128, HOUR);
+    let t = target(run(&stereo_talk, &settings()));
+    assert_eq!(t.content, Content::Speech);
+    assert_eq!((t.encoding, t.channels), (Encoding::Mp3Cbr { kbps: 64 }, 2));
+    let s48 = with(|s| s.speech = SpeechQuality::Kbps48);
+    let t = target(run(&stereo_talk, &s48));
+    assert_eq!((t.encoding, t.channels), (Encoding::Mp3Cbr { kbps: 96 }, 2));
+    let smallest = with(|s| s.mode = Mode::Smallest);
+    let t = target(run(&stereo_talk, &smallest));
+    assert_eq!((t.encoding, t.channels), (Encoding::Opus { kbps: 48 }, 2));
+    // With permission, speech becomes mono.
+    let downmix = with(|s| s.allow_downmix = true);
+    let t = target(run(&stereo_talk, &downmix));
+    assert_eq!((t.encoding, t.channels), (Encoding::Mp3Cbr { kbps: 32 }, 1));
+    // Stereo music is never folded to mono, even with permission.
+    let t = target(run(&song(AudioCodec::Mp3, 320, 2), &downmix));
+    assert_eq!(t.channels, 2);
+    // A low-bitrate stereo file that looks like speech stays stereo, and is
+    // left alone because stereo speech is already at its target.
     assert_eq!(
-        t.encoding,
-        Encoding::Mp3Vbr {
-            quality: 4,
-            approx_kbps: 85
-        }
+        skip(run(&song(AudioCodec::Mp3, 64, 2), &settings())),
+        SkipReason::AlreadyCompressed { kbps: 64 }
     );
+}
+
+#[test]
+fn multichannel_veto_comes_before_speech() {
+    // 22.05 kHz six-channel audio classifies as speech; without permission
+    // it is still kept, whatever the content.
+    let surround = probe(AudioCodec::Pcm, 22_050, 6, 2117, 300.0);
+    for content in [
+        ContentOverride::Auto,
+        ContentOverride::Speech,
+        ContentOverride::Music,
+    ] {
+        assert_eq!(
+            skip(plan_audio(&surround, &settings(), AudioInputs { content })),
+            SkipReason::Multichannel { channels: 6 },
+            "{content:?}"
+        );
+        let smallest = with(|s| s.mode = Mode::Smallest);
+        assert_eq!(
+            skip(plan_audio(&surround, &smallest, AudioInputs { content })),
+            SkipReason::Multichannel { channels: 6 },
+            "{content:?} smallest"
+        );
+    }
+    let downmix = with(|s| s.allow_downmix = true);
+    assert_eq!(target(run(&surround, &downmix)).channels, 1, "speech");
+    let music = AudioInputs {
+        content: ContentOverride::Music,
+    };
+    assert_eq!(
+        target(plan_audio(&surround, &downmix, music)).channels,
+        2,
+        "music"
+    );
+}
+
+#[test]
+fn second_audio_track_keeps_the_original() {
+    let mut p = mp3_book(64, 22_050);
+    p.audio_tracks = 2;
+    assert_eq!(skip(run(&p, &settings())), SkipReason::UnsupportedStreams);
 }
 
 #[test]
@@ -235,7 +287,6 @@ fn smallest_mode() {
         &s,
         AudioInputs {
             content: ContentOverride::Music,
-            dual_mono: false,
         },
     ));
     assert_eq!(t.encoding, Encoding::Opus { kbps: 64 });
@@ -282,7 +333,6 @@ fn never_raises_sample_rate() {
         &settings(),
         AudioInputs {
             content: ContentOverride::Music,
-            dual_mono: false,
         },
     ));
     assert_eq!(t.sample_rate, Some(32_000));

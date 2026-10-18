@@ -327,38 +327,6 @@ async fn wav_to_mp3_flac_and_opus() {
 }
 
 #[tokio::test]
-async fn detects_duplicated_stereo() {
-    let Some(bin) = ffmpeg_bin() else { return };
-    let dir = tempfile::tempdir().unwrap();
-    let same = dir.path().join("same.wav");
-    make(
-        &bin,
-        &["-f", "lavfi", "-i", "sine=f=440:d=40", "-ac", "2", s(&same)],
-    );
-    let real = dir.path().join("real.wav");
-    make(
-        &bin,
-        &[
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=f=440:d=40",
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=f=550:d=40",
-            "-filter_complex",
-            "[0:a][1:a]join=inputs=2:channel_layout=stereo",
-            s(&real),
-        ],
-    );
-    let ff = Ffmpeg::new(bin);
-    let token = CancellationToken::new();
-    assert!(ff.is_dual_mono(&same, 40.0, &token).await.unwrap());
-    assert!(!ff.is_dual_mono(&real, 40.0, &token).await.unwrap());
-}
-
-#[tokio::test]
 async fn sample_test_predicts_the_saving() {
     let Some(bin) = ffmpeg_bin() else { return };
     let dir = tempfile::tempdir().unwrap();
@@ -695,7 +663,7 @@ mod pipeline {
     }
 
     #[tokio::test]
-    async fn duplicated_stereo_music_becomes_mono() {
+    async fn duplicated_stereo_music_stays_stereo() {
         let Some(bin) = ffmpeg_bin() else { return };
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("song.mp3");
@@ -720,7 +688,8 @@ mod pipeline {
             panic!("expected compression");
         };
         let out = probe_audio(&c.output).unwrap();
-        assert_eq!(out.channels, Some(1), "identical channels stored once");
+        // Channels are never reduced without the downmix setting.
+        assert_eq!(out.channels, Some(2));
     }
 }
 
@@ -758,15 +727,16 @@ async fn compare_quality_samples() {
         labels,
         [
             "Original",
-            "Speech 32 kbps (MP3)",
-            "Speech 48 kbps (MP3)",
-            "Smallest (Opus 24 kbps)"
+            "MP3 32 kbps, mono",
+            "MP3 48 kbps, mono",
+            "Opus 24 kbps, mono"
         ]
     );
     for s in &samples {
         assert!(s.path.is_file(), "{:?}", s.path);
         assert!(s.bytes_per_hour > 0);
     }
+    assert_labels_match_files(&samples);
     // The original's real size: about 29 MB per hour at 64 kbps.
     let original = samples[0].bytes_per_hour as f64 / 1e6;
     assert!((26.0..32.0).contains(&original), "{original}");
@@ -774,4 +744,62 @@ async fn compare_quality_samples() {
     let mp3 = samples[1].bytes_per_hour as f64 / 1e6;
     assert!((12.0..17.0).contains(&mp3), "{mp3}");
     assert!(!out.join("old.mp3").exists(), "old samples removed");
+}
+
+/// Every sample's file holds the codec and channels its label names.
+fn assert_labels_match_files(samples: &[r2dock_media::preview::Sample]) {
+    for s in samples.iter().skip(1) {
+        let p = probe_audio(&s.path).unwrap();
+        let codec = match p.codec {
+            AudioCodec::Mp3 => "MP3",
+            AudioCodec::Aac => "AAC",
+            AudioCodec::Opus => "Opus",
+            AudioCodec::Flac => "FLAC",
+            other => panic!("{other:?}"),
+        };
+        assert!(s.label.starts_with(codec), "{} is {codec}", s.label);
+        let channels = if p.channels == Some(1) {
+            "mono"
+        } else {
+            "stereo"
+        };
+        assert!(s.label.ends_with(channels), "{} is {channels}", s.label);
+    }
+}
+
+/// An M4A stays AAC whatever the MP3 speech setting, so it gets one AAC
+/// sample, labeled as AAC.
+#[tokio::test]
+async fn compare_quality_on_aac_is_labeled_aac() {
+    let Some(bin) = ffmpeg_bin() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("talk.m4a");
+    let long = SPEECH.replace("d=150", "d=200");
+    make(
+        &bin,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            &long,
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-ac",
+            "1",
+            s(&input),
+        ],
+    );
+    let out = dir.path().join("preview");
+    let samples =
+        r2dock_media::preview::compare(&Ffmpeg::new(bin), &input, &out, &CancellationToken::new())
+            .await
+            .unwrap();
+    let labels: Vec<&str> = samples.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["Original", "AAC 64 kbps, mono", "Opus 24 kbps, mono"]
+    );
+    assert_labels_match_files(&samples);
 }

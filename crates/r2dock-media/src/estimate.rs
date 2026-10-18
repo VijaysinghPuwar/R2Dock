@@ -51,14 +51,7 @@ pub fn decide_file(
         Ok(p) => p,
         Err(ProbeError::Unsupported | ProbeError::Io(_)) => return FileDecision::NotAudio,
     };
-    match plan_audio(
-        &probe,
-        settings,
-        AudioInputs {
-            content,
-            dual_mono: false,
-        },
-    ) {
+    match plan_audio(&probe, settings, AudioInputs { content }) {
         AudioDecision::Compress(t) => FileDecision::Compress {
             estimated_size: t.estimated_size,
             new_key: output_key(key, t.extension.as_deref()),

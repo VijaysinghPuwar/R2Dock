@@ -14,7 +14,9 @@ function skipText(reason: SkipReason): string {
     case "hdr":
       return "HDR video kept as is";
     case "unsupportedStreams":
-      return "Has tracks MP4 cannot hold";
+      return "Has tracks that would be lost";
+    case "tracksNotKept":
+      return "Compressed copy lost a track";
     case "noVideoEncoder":
       return "No video encoder on this computer";
     case "alreadyEfficient":
