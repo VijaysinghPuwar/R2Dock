@@ -265,6 +265,7 @@ pub(super) fn copy_unusable(c: &CompressedCopy) -> bool {
     !digest_written(&c.temp).is_ok_and(|(file, sha256)| file == want.file && sha256 == want.sha256)
 }
 
+// The interface matches this "Compression failed:" prefix (compressionNotice.ts).
 fn failure_error(message: &str) -> AppError {
     AppError::new(
         ErrorCode::Internal,
