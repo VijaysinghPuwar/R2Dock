@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { qk, usePreferences, useSettings, useUpdatePreferences } from "../../app/queries";
 import { Button } from "../../components/Button";
 import { SegmentedControl, Switch } from "../../components/Controls";
+import { Banner } from "../../components/Feedback";
 import { Select } from "../../components/Fields";
 import { toast } from "../../components/toastStore";
 import {
@@ -106,6 +107,11 @@ export function LogsSection() {
 
   return (
     <Section id="logs" title="Logs">
+      {settings.data?.activityLogProblem && (
+        <div className="settings-banner">
+          <Banner tone="warning">{settings.data.activityLogProblem}</Banner>
+        </div>
+      )}
       <Switch
         label="Activity log"
         description="Records each action and its result (with error codes) to help find problems. Never records keys or secrets. Saved as CSV files that open in Excel, Numbers, or Google Sheets."

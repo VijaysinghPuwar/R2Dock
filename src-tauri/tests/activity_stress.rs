@@ -107,7 +107,11 @@ fn concurrent_writers(threads: usize, per_thread: usize) {
         h.join().unwrap();
     }
     let total = threads * per_thread;
-    let lines = wait_for_rows(&log_dir, total, Duration::from_secs(120));
+    assert!(log.flush(Duration::from_secs(120)), "writer drains in time");
+    // Logging never makes callers wait: rows that do not fit in the queue
+    // are dropped, counted, and noted in the log.
+    let dropped = usize::try_from(log.dropped_rows()).unwrap();
+    let lines = wait_for_rows(&log_dir, total - dropped, Duration::from_secs(120));
     let elapsed = started.elapsed();
 
     let headers = lines.iter().filter(|l| l.ends_with(&header_line())).count();
@@ -116,11 +120,29 @@ fn concurrent_writers(threads: usize, per_thread: usize) {
     for l in lines.iter().filter(|l| l.ends_with(&header_line())) {
         assert_eq!(l.as_str(), format!("{BOM}{}", header_line()));
     }
-    let rows: Vec<_> = lines
+    let (notes, rows): (Vec<_>, Vec<_>) = lines
         .iter()
         .filter(|l| !l.ends_with(&header_line()))
-        .collect();
-    assert_eq!(rows.len(), total, "every event is written exactly once");
+        .partition(|l| parse(l)[3] == "activity_rows_dropped");
+    let noted: usize = notes
+        .iter()
+        .map(|l| {
+            let details = &parse(l)[14];
+            details
+                .trim_start_matches("dropped=")
+                .parse::<usize>()
+                .unwrap()
+        })
+        .sum();
+    assert_eq!(noted, dropped, "every dropped row is noted");
+    assert_eq!(
+        rows.len() + dropped,
+        total,
+        "every event is written exactly once or counted as dropped"
+    );
+    if threads * per_thread <= 8_000 {
+        assert_eq!(dropped, 0, "a normal burst fits in the queue");
+    }
     let mut errors = 0;
     for row in &rows {
         let cells = parse(row);
@@ -142,7 +164,7 @@ fn concurrent_writers(threads: usize, per_thread: usize) {
     let all = lines.join("\n");
     assert!(!all.contains("FAKESECRETVALUE123"));
     eprintln!(
-        "activity stress: {total} rows from {threads} threads written in {:.2} s",
+        "activity stress: {total} rows from {threads} threads in {:.2} s, {dropped} dropped",
         elapsed.as_secs_f64()
     );
 }
@@ -231,8 +253,13 @@ fn exports_a_large_folder_in_order_heavy() {
 #[test]
 #[ignore = "manual; needs R2DOCK_EXPORT_DIR and R2DOCK_EXPORT_OUT"]
 fn real_folder_exports() {
-    let dir = std::env::var("R2DOCK_EXPORT_DIR").unwrap();
-    let out = std::env::var("R2DOCK_EXPORT_OUT").unwrap();
+    let (Ok(dir), Ok(out)) = (
+        std::env::var("R2DOCK_EXPORT_DIR"),
+        std::env::var("R2DOCK_EXPORT_OUT"),
+    ) else {
+        eprintln!("real folder: skipped (R2DOCK_EXPORT_DIR and R2DOCK_EXPORT_OUT not set)");
+        return;
+    };
     let n = export::export_csv(Path::new(&dir), None, Path::new(&out)).unwrap();
     let text = std::fs::read_to_string(&out).unwrap();
     for row in text.lines().skip(1) {

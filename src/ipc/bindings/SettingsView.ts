@@ -18,4 +18,9 @@ logDir: string, credentialStore: string, credentialStoreAvailable: boolean,
  * Removed or replaced secrets still waiting to be deleted from the
  * credential store. Absent when there are none.
  */
-credentialCleanupPending?: number, };
+credentialCleanupPending?: number, 
+/**
+ * Activity log rows that could not be written or were skipped this
+ * session, in plain words. Absent when logging works.
+ */
+activityLogProblem?: string, };

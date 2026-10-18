@@ -279,6 +279,8 @@ pub fn run() {
         {
             // Keep resumable transfers for the next launch.
             state.engine.flush();
+            // Write queued activity rows, waiting at most two seconds.
+            state.activity.shutdown(std::time::Duration::from_secs(2));
         }
     });
 }

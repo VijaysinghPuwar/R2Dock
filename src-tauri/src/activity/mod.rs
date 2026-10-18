@@ -12,17 +12,17 @@
 //!   names". The same name always gives the same hash, so events can still be
 //!   matched up.
 //! - Every cell also passes through the redaction filter (see [`csv`]).
-//! - Writes happen on a background thread, so commands never wait on disk.
+//! - Writes happen on a background thread through a bounded queue, so
+//!   commands never wait on disk (see [`writer`]). Rows that cannot be
+//!   written or queued are counted and shown in Settings.
 
 pub mod csv;
 pub mod export;
+mod writer;
 
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Sender, channel};
 use std::time::{Duration, Instant, SystemTime};
 
 use chrono::Utc;
@@ -31,6 +31,7 @@ use r2dock_core::AppError;
 use serde_json::{Map, Value};
 
 use self::csv::{Record, RecordError};
+use self::writer::Writer;
 
 /// File name prefix shared by CSV and old JSONL activity files.
 pub const FILE_PREFIX: &str = "activity-";
@@ -40,34 +41,44 @@ pub struct ActivityLog {
     enabled: AtomicBool,
     names: AtomicBool,
     session: String,
-    /// Sends `(UTC date, CSV line)` to the writer thread.
-    tx: Option<Sender<(String, String)>>,
+    writer: Writer,
 }
 
 impl ActivityLog {
     /// Start the log and its writer thread.
     pub fn start(dir: PathBuf, enabled: bool, names: bool) -> Arc<Self> {
         let dir = Arc::new(RwLock::new(dir));
-        let (tx, rx) = channel::<(String, String)>();
-        let writer_dir = dir.clone();
         let session = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
-        let writer_session = session.clone();
-        let spawned = std::thread::Builder::new()
-            .name("r2dock-activity".into())
-            .spawn(move || {
-                while let Ok((date, line)) = rx.recv() {
-                    let dir = writer_dir.read().clone();
-                    write_line(&dir, &date, &line, &writer_session);
-                }
-            })
-            .is_ok();
+        let writer = Writer::start(dir.clone(), session.clone());
         Arc::new(Self {
             dir,
             enabled: AtomicBool::new(enabled),
             names: AtomicBool::new(names),
             session,
-            tx: spawned.then_some(tx),
+            writer,
         })
+    }
+
+    /// Wait until every row recorded so far is on disk, for at most
+    /// `timeout`. Returns false if that did not happen in time.
+    pub fn flush(&self, timeout: Duration) -> bool {
+        self.writer.flush(timeout)
+    }
+
+    /// Write what is queued (within `timeout`) and stop the writer. Used
+    /// when the app exits.
+    pub fn shutdown(&self, timeout: Duration) -> bool {
+        self.writer.shutdown(timeout)
+    }
+
+    /// Rows not written this session because the queue was full.
+    pub fn dropped_rows(&self) -> u64 {
+        self.writer.dropped()
+    }
+
+    /// A plain description of logging problems this session, if any.
+    pub fn problem(&self) -> Option<String> {
+        self.writer.problem()
     }
 
     pub fn configure(&self, enabled: bool, names: bool, dir: PathBuf) {
@@ -235,7 +246,6 @@ impl ActivityLog {
         if !self.enabled.load(Ordering::Relaxed) {
             return;
         }
-        let Some(tx) = &self.tx else { return };
         let now = Utc::now();
         let record = Record {
             time: now,
@@ -257,7 +267,7 @@ impl ActivityLog {
             }),
         };
         let date = now.format("%Y-%m-%d").to_string();
-        let _ = tx.send((date, record.to_line()));
+        self.writer.send(date, record.to_line());
     }
 
     /// Delete activity files older than `days`. Blocking.
@@ -281,32 +291,6 @@ impl ActivityLog {
             }
         }
     }
-}
-
-/// Append a line to the day's file. When that file cannot be opened (on
-/// Windows, Excel keeps an open CSV locked), the line goes to
-/// `activity-YYYY-MM-DD-<session>.csv` instead, which export and trim treat
-/// as part of the same day.
-fn write_line(dir: &Path, date: &str, line: &str, session: &str) {
-    if std::fs::create_dir_all(dir).is_err() {
-        return;
-    }
-    let daily = dir.join(format!("{FILE_PREFIX}{date}.csv"));
-    let fallback = dir.join(format!("{FILE_PREFIX}{date}-{session}.csv"));
-    for file in [daily, fallback] {
-        if append_line(&file, line).is_ok() {
-            return;
-        }
-    }
-}
-
-fn append_line(file: &Path, line: &str) -> std::io::Result<()> {
-    let mut f = OpenOptions::new().create(true).append(true).open(file)?;
-    // A new (or emptied) file starts with the byte order mark and header.
-    if f.metadata()?.len() == 0 {
-        writeln!(f, "{}{}", csv::BOM, csv::header_line())?;
-    }
-    writeln!(f, "{line}")
 }
 
 /// One action being recorded. Call [`Act::end`] with the result.
@@ -373,6 +357,29 @@ impl Act {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn export_right_after_logging_sees_every_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = ActivityLog::start(dir.path().join("activity"), true, false);
+        for i in 0..2_000 {
+            log.start_action("object_list")
+                .field("objects", i)
+                .end::<()>(&Ok(()));
+        }
+        // What the export command does before reading the files.
+        assert!(log.flush(Duration::from_secs(10)));
+        let dest = dir.path().join("out.csv");
+        let rows = export::export_csv(&log.dir(), None, &dest).unwrap();
+        assert_eq!(rows, 2_000);
+        assert_eq!(log.dropped_rows(), 0);
+        assert!(log.problem().is_none());
+        // Exit drains and stops the writer within its limit.
+        log.event("app_exit", Map::new());
+        assert!(log.shutdown(Duration::from_secs(5)));
+        assert_eq!(export::export_csv(&log.dir(), None, &dest).unwrap(), 2_001);
+    }
 
     fn read_all(dir: &Path) -> String {
         let mut out = String::new();
@@ -503,8 +510,8 @@ mod tests {
         // A folder with the daily name cannot be opened for append, like a
         // file Excel holds open.
         std::fs::create_dir(d.join("activity-2026-10-18.csv")).unwrap();
-        write_line(d, "2026-10-18", "row-1", "ab12cd34");
-        write_line(d, "2026-10-18", "row-2", "ab12cd34");
+        writer::write_lines(d, "2026-10-18", &["row-1"], "ab12cd34").unwrap();
+        writer::write_lines(d, "2026-10-18", &["row-2"], "ab12cd34").unwrap();
         let text = std::fs::read_to_string(d.join("activity-2026-10-18-ab12cd34.csv")).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(
@@ -519,7 +526,7 @@ mod tests {
 
         // Once the daily file is free again, lines go back to it.
         std::fs::remove_dir(d.join("activity-2026-10-18.csv")).unwrap();
-        write_line(d, "2026-10-18", "row-3", "ab12cd34");
+        writer::write_lines(d, "2026-10-18", &["row-3"], "ab12cd34").unwrap();
         let daily = std::fs::read_to_string(d.join("activity-2026-10-18.csv")).unwrap();
         assert!(daily.ends_with(
             "row-3

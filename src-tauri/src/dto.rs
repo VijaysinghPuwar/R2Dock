@@ -322,6 +322,11 @@ pub struct SettingsView {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub credential_cleanup_pending: Option<u32>,
+    /// Activity log rows that could not be written or were skipped this
+    /// session, in plain words. Absent when logging works.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub activity_log_problem: Option<String>,
 }
 
 /// Which rows to include in an activity export.

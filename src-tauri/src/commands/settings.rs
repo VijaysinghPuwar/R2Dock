@@ -29,8 +29,12 @@ pub fn view(state: &AppState) -> SettingsView {
             0 => None,
             n => Some(u32::try_from(n).unwrap_or(u32::MAX)),
         },
+        activity_log_problem: state.activity.problem(),
     }
 }
+
+/// How long an export waits for queued activity rows to reach the files.
+const EXPORT_FLUSH: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Push settings that affect running services.
 pub fn apply(state: &AppState, log: Option<&crate::logging::ReloadHandle>) {
@@ -269,13 +273,19 @@ pub async fn activity_export_csv(
         .activity
         .start_action("activity_export")
         .field("range", format!("{range:?}"));
-    let result = tokio::task::spawn_blocking(move || export::export_csv(&dir, since, &dest))
-        .await
-        .map_err(|_| AppError::internal("A background task stopped unexpectedly."))
-        .and_then(|r| {
-            r.map_err(|e| r2dock_core::app_error::io_error(&e, "export the activity log"))
-        })
-        .map(|rows| u32::try_from(rows).unwrap_or(u32::MAX));
+    let log = state.activity.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        // Rows recorded before the export are written first (bounded wait).
+        let flushed = log.flush(EXPORT_FLUSH);
+        export::export_csv(&dir, since, &dest).map(|rows| (rows, flushed))
+    })
+    .await
+    .map_err(|_| AppError::internal("A background task stopped unexpectedly."))
+    .and_then(|r| r.map_err(|e| r2dock_core::app_error::io_error(&e, "export the activity log")));
+    if let Ok((_, flushed)) = &result {
+        act.set("complete", *flushed);
+    }
+    let result = result.map(|(rows, _)| u32::try_from(rows).unwrap_or(u32::MAX));
     if let Ok(rows) = &result {
         act.set("rows", *rows);
     }
