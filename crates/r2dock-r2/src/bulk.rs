@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use crate::client::R2Client;
 use crate::dto::KeyFailure;
 use crate::error::R2Error;
-use crate::ops::DELETE_BATCH;
+use crate::ops::{CopySpec, DELETE_BATCH, same_etag};
 
 /// Parallel requests for bulk work.
 pub const BULK_CONCURRENCY: usize = 4;
@@ -213,9 +213,11 @@ pub fn plan_move(
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MoveReport {
     pub moved: u64,
-    /// Copy failed or destination already existed: the source is untouched.
+    /// Not copied, the destination already existed, or the destination
+    /// changed right after copying: the source is kept.
     pub failures: Vec<KeyFailure>,
-    /// Copied, but the original could not be removed: both exist.
+    /// Copied, but the original was kept: it could not be removed, it
+    /// changed during the move, or the copy could not be confirmed.
     pub copied_not_deleted: Vec<KeyFailure>,
 }
 
@@ -225,66 +227,107 @@ enum ItemResult {
     CopiedOnly(KeyFailure),
 }
 
+const DEST_EXISTS: &str = "Something with that name already exists at the destination.";
+
+/// Move one object: copy exactly the inspected source version, confirm the
+/// destination is that copy, confirm the source is still that version, and
+/// only then delete it.
+///
+/// R2 has no conditional DeleteObject, so a source changed between the last
+/// check and the delete (one request) can still be removed. Every other
+/// conflicting change keeps the source (PLAN.md 8.7).
 async fn move_one(client: &R2Client, bucket: &str, item: &MoveItem, overwrite: bool) -> ItemResult {
-    let fail = |message: String| {
+    let fail = |message: &str| {
         ItemResult::Failed(KeyFailure {
             key: item.src.clone(),
-            message,
+            message: message.to_string(),
+        })
+    };
+    let kept = |message: &str| {
+        ItemResult::CopiedOnly(KeyFailure {
+            key: item.src.clone(),
+            message: message.to_string(),
         })
     };
     if !overwrite {
+        // Early, friendly check. The copy itself is also conditional.
         match client.exists(bucket, &item.dst).await {
-            Ok(true) => {
-                return fail(
-                    "Something with that name already exists at the destination.".to_string(),
-                );
-            }
+            Ok(true) => return fail(DEST_EXISTS),
             Ok(false) => {}
-            Err(e) => return fail(e.to_app_error().message),
+            Err(e) => return fail(&e.to_app_error().message),
         }
     }
     // Inspect the source now and copy exactly this version.
     let source = match client.head_object(bucket, &item.src).await {
         Ok(d) => d,
-        Err(e) => return fail(e.to_app_error().message),
+        Err(e) => return fail(&e.to_app_error().message),
     };
-    if let Err(e) = client
-        .copy_object(
-            bucket,
-            &item.src,
-            &item.dst,
-            source.size,
-            source.etag.as_deref(),
-        )
-        .await
-    {
-        let message = match e {
-            R2Error::PreconditionFailed { .. } => {
-                "The file changed while moving, so it was left in place.".to_string()
-            }
-            other => other.to_app_error().message,
-        };
-        return fail(message);
-    }
-    // Verify the copy before removing the original.
-    match client.head_object(bucket, &item.dst).await {
-        Ok(d) if d.size == source.size => {}
-        Ok(_) => {
-            return fail(
-                "The copy did not match the original, so the original was kept.".to_string(),
-            );
+    let Some(source_etag) = source.etag.as_deref() else {
+        return fail("The file could not be identified, so it was left in place.");
+    };
+    let spec = CopySpec {
+        src_key: &item.src,
+        dst_key: &item.dst,
+        size: source.size,
+        source_etag: Some(source_etag),
+        create_only: !overwrite,
+    };
+    let copy_etag = match client.copy_object(bucket, &spec).await {
+        Ok(etag) => etag,
+        Err(R2Error::PreconditionFailed { .. }) => {
+            // Either the source changed or the destination appeared.
+            return match client.exists(bucket, &item.dst).await {
+                Ok(true) if !overwrite => fail(DEST_EXISTS),
+                _ => fail("The file changed while moving, so it was left in place."),
+            };
         }
-        Err(e) => return fail(e.to_app_error().message),
+        Err(e) => return fail(&e.to_app_error().message),
+    };
+    // The destination must be the object this copy created, not just an
+    // object of the same size.
+    let Some(copy_etag) = copy_etag else {
+        return kept("Copied, but the copy could not be confirmed, so the original was kept.");
+    };
+    match client.head_object(bucket, &item.dst).await {
+        Ok(d)
+            if d.size == source.size
+                && d.etag.as_deref().is_some_and(|e| same_etag(e, &copy_etag)) => {}
+        Ok(_) => {
+            return fail("The destination changed right after copying, so the original was kept.");
+        }
+        Err(R2Error::NoSuchKey { .. }) => {
+            return fail("The copy disappeared right after copying, so the original was kept.");
+        }
+        Err(e) => {
+            return kept(&format!(
+                "Copied, but the copy could not be checked, so the original was kept. {}",
+                e.to_app_error().message
+            ));
+        }
+    }
+    // The source must still be the version that was copied.
+    match client.head_object(bucket, &item.src).await {
+        Ok(d)
+            if d.size == source.size
+                && d.etag.as_deref().is_some_and(|e| same_etag(e, source_etag)) => {}
+        Ok(_) => {
+            return kept("Copied, but the original changed during the move, so it was kept.");
+        }
+        // Someone else already removed it; the verified copy is in place.
+        Err(R2Error::NoSuchKey { .. }) => return ItemResult::Moved,
+        Err(e) => {
+            return kept(&format!(
+                "Copied, but the original could not be checked, so it was kept. {}",
+                e.to_app_error().message
+            ));
+        }
     }
     match client.delete_object(bucket, &item.src).await {
         Ok(()) => ItemResult::Moved,
-        Err(e) => ItemResult::CopiedOnly(KeyFailure {
-            key: item.src.clone(),
-            message: format!(
-                "Copied, but the original was not removed. {}",
-                e.to_app_error().message
-            ),
-        }),
+        Err(e) => kept(&format!(
+            "Copied, but the original was not removed. {}",
+            e.to_app_error().message
+        )),
     }
 }
 

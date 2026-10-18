@@ -436,15 +436,30 @@ R2 has no rename or move operation. All are built from primitives and **none are
 |---|---|
 | Copy file up to 5 GiB | `CopyObject` (server side, no bytes through the client) [Confirmed supported; 5 GiB limit Verify] |
 | Copy file above 5 GiB | Multipart copy with `UploadPartCopy` [Confirmed supported] |
-| Rename/move file | Copy, then `HeadObject` on destination to confirm size and ETag class, then `DeleteObject` on source |
+| Rename/move file | See "Move sequence" below: conditional copy, destination ETag check, source ETag re-check, then `DeleteObject` on source |
 | Rename/move folder | For each object under the prefix: copy, verify, delete. Bounded concurrency. Journaled. |
 
 Partial failure handling:
 - If copy fails: source untouched; report.
 - If copy succeeds and delete fails: both exist; report "copied but original not removed" with Retry delete.
+- If anything changed during the move, or the outcome is unclear, the source is kept and the item is reported (see below).
+
+Move sequence for one object (`crates/r2dock-r2/src/bulk.rs`, `move_one`):
+
+1. Unless overwriting, `HeadObject` on the destination; an existing object is a conflict.
+2. `HeadObject` on the source; remember its size and ETag. No ETag means no move.
+3. Copy that version only:
+   - Up to 5 GiB: `CopyObject` with `x-amz-copy-source-if-match: <source ETag>` **[Confirmed supported on CopyObject]** and, unless overwriting, `cf-copy-destination-if-none-match: *` **[Confirmed documented R2 extension, marked beta]**. R2 checks the destination condition when the copy is committed, so a destination created after step 1 is not replaced; the request fails with 412. The two conditions are not atomic with each other, which does not matter here: the source condition picks the version, the destination condition guards the write.
+   - Above 5 GiB: R2 lists `x-amz-copy-source-if-*` as unsupported on `UploadPartCopy` and documents no conditions on `CompleteMultipartUpload` **[Confirmed]**, so no source condition is sent on parts. The source ETag and size are checked before `CreateMultipartUpload` and again after the last part; unless overwriting, the destination is checked for absence before creating and again right before completing. Any mismatch aborts the upload. A change in the short window between the last check and `CompleteMultipartUpload` is not detected, and a source that changed and changed back (same ETag) between parts is not detected.
+4. `HeadObject` on the destination: its size and ETag must equal the source size and the ETag returned by the copy. Same size alone is not enough. A mismatch means someone replaced the destination; the source is kept and the item is reported as failed.
+5. `HeadObject` on the source: its size and ETag must still equal step 2. A change keeps the source and reports the item as copied, original kept. A source that is already gone counts as moved.
+6. `DeleteObject` on the source. R2 documents no conditional headers on `DeleteObject` **[Confirmed: none listed]**, so the delete is unconditional. A change to the source in the single round trip between step 5 and the delete can still be lost. This window is narrow but not closed.
+
+Unclear outcomes keep the source: a copy whose response is lost is reported as failed (a retry is refused by the destination condition), and a destination or source check that errors is reported as copied, original kept. Request-ordering tests for these cases use an in-process mock (`crates/r2dock-r2/tests/move_races.rs`); they prove the client's sequencing, not R2's enforcement. **[Verify]** against a disposable R2 test bucket: `cf-copy-destination-if-none-match` returns 412 for an existing key, and the `CopyObject` result ETag equals the ETag `HeadObject` then reports for the new object (if it ever differs, moves keep the source instead of deleting it).
 - If the app quits mid-folder-move: journal lists processed keys; on restart offer "Finish move" or "Leave as is".
 - Destination conflicts are checked before starting (list destination prefix) and per object with the conflict policy.
-- `CopyObject` supports `x-amz-metadata-directive` **[Confirmed]**; use `COPY` to keep content type and custom metadata. Storage class is preserved by passing it explicitly **[Verify]**.
+- `CopyObject` supports `x-amz-metadata-directive` **[Confirmed]**; use `COPY` to keep content type and custom metadata. Whether `COPY` also keeps the storage class on R2 is **[Verify]**; single copies do not send `x-amz-storage-class` today.
+- Multipart copy cannot use the metadata directive, so `CreateMultipartUpload` sets each field from the source `HeadObject`: Content-Type, Cache-Control, Content-Encoding, Content-Disposition, Content-Language, Expires, `x-amz-storage-class`, and custom `x-amz-meta-*` metadata (all listed as supported on R2 `CreateMultipartUpload` **[Confirmed]**). Absent fields are not sent. An `Expires` value that is not a valid HTTP date is dropped. Tagging, ACLs, and website redirects are not supported by R2 and are not copied.
 
 ### 8.8 Metadata and storage classes
 
@@ -610,6 +625,7 @@ Downloads:
 | Local files | Path traversal or overwrite from malicious keys | Path guard (9.6), no-clobber rename, temp files | Low |
 | Local files | Following symlinks during upload to exfiltrate | `follow_links(false)`, skip and report | Low |
 | Remote data | Accidental destructive operations | Confirmations, typed confirmation, counts shown, no hidden bulk actions | User error remains possible; R2 has no trash |
+| Remote data | Another client changes an object during a move, so the move deletes the new version or replaces an object it was not allowed to | Copy bound to the source ETag; atomic destination condition on copies up to 5 GiB; destination ETag must equal the copy result; source ETag re-checked before delete; any mismatch or unclear outcome keeps the source and is reported (8.7) | R2 has no conditional delete: a source change in the one round trip before the delete is lost. Multipart copies (above 5 GiB) only re-check before completing |
 | Updates | Malicious update | Tauri updater signature verification, HTTPS, signing keys offline | Compromise of signing key |
 | Activity log | Crafted object or file name runs a formula when the CSV is opened in a spreadsheet | Formula prefixes (`=`, `+`, `-`, `@`, tab, carriage return) neutralized with `'`; RFC 4180 quoting; names hashed by default | Low |
 | Media compression | Malicious media file attacks FFmpeg or the probe | FFmpeg runs as a separate process with a fixed argument array, `file:` inputs and `-protocol_whitelist file`, below-normal priority on Windows, a 2 minute watchdog, and kill-on-exit; outputs only in R2Dock's work folder; the original is opened without following symlinks and checked before and after encoding; Symphonia (pure Rust) probes in-process | An FFmpeg vulnerability could still run code as the user while a file is compressed. Compression is off by default |

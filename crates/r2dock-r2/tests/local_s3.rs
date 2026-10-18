@@ -110,15 +110,24 @@ async fn head_copy_delete() {
         Err(R2Error::NoSuchKey { .. })
     ));
 
-    c.copy_object(
-        "bkt",
-        "a dir/file one.txt",
-        "copied/file two.txt",
-        d.size,
-        d.etag.as_deref(),
-    )
-    .await
-    .unwrap();
+    let copied = c
+        .copy_object(
+            "bkt",
+            &r2dock_r2::ops::CopySpec {
+                src_key: "a dir/file one.txt",
+                dst_key: "copied/file two.txt",
+                size: d.size,
+                source_etag: d.etag.as_deref(),
+                create_only: true,
+            },
+        )
+        .await
+        .unwrap();
+    let copy_head = c.head_object("bkt", "copied/file two.txt").await.unwrap();
+    assert!(r2dock_r2::ops::same_etag(
+        copied.as_deref().unwrap(),
+        copy_head.etag.as_deref().unwrap()
+    ));
     assert_eq!(
         c.head_object("bkt", "copied/file two.txt")
             .await

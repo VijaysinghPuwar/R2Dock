@@ -30,8 +30,8 @@ export async function runMove(
 export function moveProblems(res: MoveResult): OpResult | null {
   if (res.failures.length === 0 && res.copiedNotDeleted.length === 0) return null;
   const parts = [`Moved ${plural(res.moved, "object")}.`];
-  if (res.failures.length > 0) parts.push(`${formatCount(res.failures.length)} could not be copied and are still in the original place.`);
-  if (res.copiedNotDeleted.length > 0) parts.push(`${formatCount(res.copiedNotDeleted.length)} were copied but the originals could not be deleted.`);
+  if (res.failures.length > 0) parts.push(`${formatCount(res.failures.length)} were not moved and are still in the original place.`);
+  if (res.copiedNotDeleted.length > 0) parts.push(`${formatCount(res.copiedNotDeleted.length)} were copied, but the originals were kept, so they now exist in both places.`);
   return {
     title: "The move did not fully complete",
     summary: parts.join(" "),
