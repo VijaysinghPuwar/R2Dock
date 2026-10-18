@@ -202,7 +202,7 @@ export function TransfersSection() {
 
 export function SecuritySection() {
   const client = useQueryClient();
-  const settings = useSettings();
+  const settings = useSettings({ refetchOnMount: "always" });
   const prefs = usePreferences();
   const update = useUpdatePreferences();
   const [clearOpen, setClearOpen] = useState(false);

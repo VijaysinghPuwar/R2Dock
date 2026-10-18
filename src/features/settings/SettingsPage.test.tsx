@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PREFERENCES, qk } from "../../app/queries";
 import { useNavStore } from "../../app/navStore";
 import type { ConnectionSummary } from "../../ipc/bindings/ConnectionSummary";
+import type { ActivityExportResult } from "../../ipc/bindings/ActivityExportResult";
 import type { Preferences } from "../../ipc/bindings/Preferences";
 import type { SettingsView } from "../../ipc/bindings/SettingsView";
 import { useToastStore } from "../../components/toastStore";
@@ -15,8 +16,9 @@ const connectionRemove = vi.fn(() => Promise.resolve());
 const logCopyPath = vi.fn((_kind: string) => Promise.resolve());
 const openActivityFolder = vi.fn(() => Promise.resolve());
 const openLogFolder = vi.fn(() => Promise.resolve());
-const activityExportCsv = vi.fn((_range: string) => Promise.resolve<number | null>(12));
+const activityExportCsv = vi.fn((_range: string) => Promise.resolve<ActivityExportResult | null>({ rows: 12, complete: true }));
 const activityResetDir = vi.fn(() => Promise.resolve<SettingsView>(baseView()));
+const settingsGet = vi.fn(() => Promise.resolve(baseView()));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
@@ -26,7 +28,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     connectionRemove: () => connectionRemove(),
     connectionList: () => Promise.resolve([connection()]),
     bucketList: () => Promise.resolve([]),
-    settingsGet: () => Promise.resolve(baseView()),
+    settingsGet: () => settingsGet(),
     logCopyPath: (kind: string) => logCopyPath(kind),
     openActivityFolder: () => openActivityFolder(),
     openLogFolder: () => openLogFolder(),
@@ -67,6 +69,7 @@ function connection(): ConnectionSummary {
 }
 
 function setup(view: SettingsView = baseView()) {
+  settingsGet.mockResolvedValue(view);
   const client = testQueryClient();
   client.setQueryData(qk.settings, view);
   client.setQueryData(qk.connections, [connection()]);
@@ -79,6 +82,48 @@ function setup(view: SettingsView = baseView()) {
   });
   return renderWithProviders(<SettingsPage />, { client });
 }
+
+beforeEach(() => {
+  settingsGet.mockClear();
+  useToastStore.getState().clear();
+  useNavStore.getState().setSettingsSection("connections");
+});
+
+describe("Settings health warnings", () => {
+  it.each([
+    {
+      section: "Advanced",
+      updated: { activityLogProblem: "Some activity rows could not be written." },
+      warning: /Some activity rows could not be written/,
+      dialog: "Reset all settings",
+    },
+    {
+      section: "Security",
+      updated: { credentialCleanupPending: 2 },
+      warning: /2 removed keys are still in the credential store/,
+      dialog: "Clear local history",
+    },
+  ])("refreshes $section health once per opening", async ({ section, updated, warning, dialog }) => {
+    const user = userEvent.setup();
+    setup();
+    settingsGet.mockResolvedValue({ ...baseView(), ...updated });
+    await user.click(screen.getByRole("button", { name: section }));
+    expect(await screen.findByText(warning)).toBeInTheDocument();
+    expect(settingsGet).toHaveBeenCalledTimes(1);
+
+    // Local UI changes must not trigger more health requests.
+    await user.click(screen.getByRole("button", { name: dialog }));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    expect(settingsGet).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Appearance" }));
+    expect(settingsGet).toHaveBeenCalledTimes(1);
+    settingsGet.mockResolvedValue(baseView());
+    await user.click(screen.getByRole("button", { name: section }));
+    await waitFor(() => expect(screen.queryByText(warning)).not.toBeInTheDocument());
+    expect(settingsGet).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("SettingsPage", () => {
   beforeEach(() => {
@@ -161,6 +206,26 @@ describe("Activity log settings", () => {
     await waitFor(() =>
       expect(useToastStore.getState().toasts.map((t) => t.message)).toContain("Exported 12 rows."),
     );
+  });
+
+  it("warns that an export may miss recent rows when the flush times out", async () => {
+    const user = userEvent.setup();
+    setup();
+    activityExportCsv.mockResolvedValueOnce({ rows: 12, complete: false });
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
+    await user.click(screen.getByRole("button", { name: "Export as CSV..." }));
+    await waitFor(() => expect(useToastStore.getState().toasts).toEqual([
+      expect.objectContaining({ tone: "warning", message: "Exported 12 rows. The export may miss the most recent rows because the activity log is still being written." }),
+    ]));
+  });
+
+  it("shows no export notice when the save dialog is cancelled", async () => {
+    const user = userEvent.setup();
+    setup();
+    activityExportCsv.mockResolvedValueOnce(null);
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
+    await user.click(screen.getByRole("button", { name: "Export as CSV..." }));
+    expect(useToastStore.getState().toasts).toEqual([]);
   });
 
   it("offers Reset to default for a custom activity folder", async () => {

@@ -123,8 +123,8 @@ export function useActiveConnection(): ConnectionSummary | null {
   return data.find((c) => c.active) ?? data[0] ?? null;
 }
 
-export function useSettings() {
-  return useQuery({ queryKey: qk.settings, queryFn: settingsGet, staleTime: Infinity });
+export function useSettings(options: { refetchOnMount?: boolean | "always" } = {}) {
+  return useQuery({ queryKey: qk.settings, queryFn: settingsGet, staleTime: Infinity, ...options });
 }
 
 export function usePreferences(): Preferences {

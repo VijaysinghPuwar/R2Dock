@@ -74,7 +74,7 @@ function LogLocation({
 /** Settings > Advanced > Logs: where the logs are and how to get them. */
 export function LogsSection() {
   const client = useQueryClient();
-  const settings = useSettings();
+  const settings = useSettings({ refetchOnMount: "always" });
   const prefs = usePreferences();
   const update = useUpdatePreferences();
   const [choosing, setChoosing] = useState(false);
@@ -96,8 +96,12 @@ export function LogsSection() {
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const rows = await activityExportCsv(range);
-      if (rows !== null) toast.success(rows === 1 ? "Exported 1 row." : `Exported ${rows.toLocaleString()} rows.`);
+      const result = await activityExportCsv(range);
+      if (result !== null) {
+        const message = result.rows === 1 ? "Exported 1 row." : `Exported ${result.rows.toLocaleString()} rows.`;
+        if (result.complete) toast.success(message);
+        else toast.warning(`${message} The export may miss the most recent rows because the activity log is still being written.`);
+      }
     } catch (e) {
       toast.danger(errorMessage(e));
     } finally {
