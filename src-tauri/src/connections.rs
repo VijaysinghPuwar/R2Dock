@@ -452,7 +452,8 @@ impl ConnectionService {
                 format!(
                     "No bucket named \u{201c}{name}\u{201d} was found for this account, or this key cannot open it."
                 ),
-            );
+            )
+            .with_name(name);
             e.detail = detail;
             e
         };

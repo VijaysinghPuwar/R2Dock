@@ -44,6 +44,12 @@ pub struct AppError {
     /// Optional technical detail (error code, request id). Never a secret.
     pub detail: Option<String>,
     pub retryable: bool,
+    /// Bucket names, object keys, or file names that appear in `message` or
+    /// `detail`. Never sent to the frontend; the activity log uses them to
+    /// hide those names when the user has not allowed names in the log.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub names: Vec<String>,
 }
 
 impl AppError {
@@ -53,7 +59,14 @@ impl AppError {
             message: message.into(),
             detail: None,
             retryable: false,
+            names: Vec::new(),
         }
+    }
+
+    /// Mark a name that the message or detail contains (see [`Self::names`]).
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.names.push(name.into());
+        self
     }
 
     pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
@@ -124,6 +137,14 @@ mod tests {
         let mapped = io_error(&err, "read file");
         assert!(!mapped.message.contains("alice"));
         assert!(mapped.detail.is_none());
+    }
+
+    #[test]
+    fn marked_names_never_cross_ipc() {
+        let e = AppError::invalid_input("Same name: private/key.txt").with_name("private/key.txt");
+        assert_eq!(e.names, vec!["private/key.txt".to_string()]);
+        let json = serde_json::to_value(&e).unwrap();
+        assert!(json.get("names").is_none(), "{json}");
     }
 
     #[test]

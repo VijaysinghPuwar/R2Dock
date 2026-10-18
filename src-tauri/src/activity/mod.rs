@@ -93,25 +93,81 @@ impl ActivityLog {
         }
     }
 
+    /// Hide names inside free text (error messages) when the user has not
+    /// allowed names: every occurrence of a known name, any path that
+    /// continues a known folder name, and any text in curly quotes (how
+    /// R2Dock messages quote names) becomes its short hash.
+    pub fn scrub(&self, text: &str, names: &[String]) -> String {
+        if self.names.load(Ordering::Relaxed) {
+            return text.to_string();
+        }
+        const OPEN: char = '\u{201c}';
+        const CLOSE: char = '\u{201d}';
+        let mut names: Vec<&str> = names
+            .iter()
+            .map(String::as_str)
+            .filter(|n| !n.is_empty())
+            .collect();
+        // Longest first, so a key wins over the folder that contains it.
+        names.sort_by_key(|n| std::cmp::Reverse(n.len()));
+        let ends_token =
+            |c: char| c.is_whitespace() || matches!(c, ',' | ';' | ')' | '"' | '\'' | CLOSE);
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(c) = rest.chars().next() {
+            if let Some(n) = names.iter().find(|n| rest.starts_with(**n)) {
+                // A folder name followed by more of a path hides that path too.
+                let mut len = n.len();
+                if n.ends_with('/') {
+                    len += rest[len..].find(ends_token).unwrap_or(rest.len() - len);
+                }
+                out.push_str(&self.name(&rest[..len]));
+                rest = &rest[len..];
+                continue;
+            }
+            if c == OPEN
+                && let Some(close) = rest[OPEN.len_utf8()..].find(CLOSE)
+            {
+                let inner = &rest[OPEN.len_utf8()..OPEN.len_utf8() + close];
+                out.push(OPEN);
+                out.push_str(&self.name(inner));
+                out.push(CLOSE);
+                rest = &rest[OPEN.len_utf8() + close + CLOSE.len_utf8()..];
+                continue;
+            }
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+        out
+    }
+
     /// Begin recording an action.
     pub fn start_action(self: &Arc<Self>, action: &str) -> Act {
         Act {
             log: self.clone(),
             action: action.to_string(),
             fields: Map::new(),
+            private: Vec::new(),
             started: Instant::now(),
         }
     }
 
-    /// Record a one-off event.
-    pub fn event(&self, action: &str, fields: Map<String, Value>) {
-        self.emit(action, "info", None, fields, None);
+    /// Record a one-off event. Free text in the fields is scrubbed like an
+    /// error message.
+    pub fn event(&self, action: &str, mut fields: Map<String, Value>) {
+        for v in fields.values_mut() {
+            if let Value::String(s) = v {
+                *s = self.scrub(s, &[]);
+            }
+        }
+        self.emit(action, "info", None, fields, None, &[]);
     }
 
     /// Record a compression milestone from the transfer engine.
     pub fn compression(&self, event: &r2dock_transfer::engine::CompressionEvent) {
         use r2dock_transfer::engine::CompressionEvent as E;
         let mut f = Map::new();
+        let mut private = Vec::new();
         let job = |id: &uuid::Uuid| Value::String(id.simple().to_string()[..8].to_string());
         let (action, outcome, duration, error) = match event {
             E::Started { id, key } => {
@@ -157,13 +213,16 @@ impl ActivityLog {
             E::Failed { id, key, message } => {
                 f.insert("job".into(), job(id));
                 f.insert("key".into(), self.name(key).into());
+                private.push(key.clone());
                 let e = AppError::new(r2dock_core::ErrorCode::Internal, message.clone());
                 ("compress_failed", "error", None, Some(e))
             }
         };
-        self.emit(action, outcome, duration, f, error.as_ref());
+        self.emit(action, outcome, duration, f, error.as_ref(), &private);
     }
 
+    /// `private` lists raw names recorded for this action; together with the
+    /// names the error marks, they are hidden in the error text.
     fn emit(
         &self,
         action: &str,
@@ -171,6 +230,7 @@ impl ActivityLog {
         duration: Option<Duration>,
         fields: Map<String, Value>,
         error: Option<&AppError>,
+        private: &[String],
     ) {
         if !self.enabled.load(Ordering::Relaxed) {
             return;
@@ -184,13 +244,16 @@ impl ActivityLog {
             outcome: outcome.to_string(),
             duration_ms: duration.map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
             fields,
-            error: error.map(|e| RecordError {
-                code: serde_json::to_value(e.code)
-                    .ok()
-                    .and_then(|v| v.as_str().map(str::to_string))
-                    .unwrap_or_default(),
-                message: e.message.clone(),
-                detail: e.detail.clone(),
+            error: error.map(|e| {
+                let names: Vec<String> = private.iter().chain(&e.names).cloned().collect();
+                RecordError {
+                    code: serde_json::to_value(e.code)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_default(),
+                    message: self.scrub(&e.message, &names),
+                    detail: e.detail.as_deref().map(|d| self.scrub(d, &names)),
+                }
             }),
         };
         let date = now.format("%Y-%m-%d").to_string();
@@ -251,6 +314,9 @@ pub struct Act {
     log: Arc<ActivityLog>,
     action: String,
     fields: Map<String, Value>,
+    /// Raw names given to [`Act::name`], kept in memory only so they can be
+    /// hidden in error text. Never written.
+    private: Vec<String>,
     started: Instant,
 }
 
@@ -265,6 +331,9 @@ impl Act {
     pub fn name(mut self, key: &str, value: &str) -> Self {
         let v = self.log.name(value);
         self.fields.insert(key.into(), Value::String(v));
+        if !value.is_empty() {
+            self.private.push(value.to_string());
+        }
         self
     }
 
@@ -287,6 +356,7 @@ impl Act {
                 Some(self.started.elapsed()),
                 self.fields,
                 None,
+                &self.private,
             ),
             Err(e) => self.log.emit(
                 &self.action,
@@ -294,6 +364,7 @@ impl Act {
                 Some(self.started.elapsed()),
                 self.fields,
                 Some(e),
+                &self.private,
             ),
         }
     }
@@ -454,6 +525,90 @@ mod tests {
             "row-3
 "
         ));
+    }
+
+    #[test]
+    fn hidden_names_never_appear_in_error_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = ActivityLog::start(dir.path().to_path_buf(), true, false);
+        // A name the caller recorded also appears inside the error text.
+        log.start_action("move_preview")
+            .name("destination", "Private Folder/")
+            .end::<()>(&Err(AppError::invalid_input(
+                "Two selected items would end up with the same name: Private Folder/x.mp3",
+            )
+            .with_detail(
+                "NoSuchKey (404) for Private Folder/x.mp3, request id req-1",
+            )));
+        // A name only the error knows about, marked by its producer.
+        log.start_action("move_preview")
+            .end::<()>(&Err(AppError::invalid_input(
+                "Two selected items would end up with the same name: hidden/clash.txt",
+            )
+            .with_name("hidden/clash.txt")));
+        // A name quoted in the message.
+        log.start_action("connection_save")
+            .end::<()>(&Err(AppError::new(
+                r2dock_core::ErrorCode::NoSuchBucket,
+                "No bucket named \u{201c}family-photos\u{201d} was found for this account.",
+            )));
+        log.compression(&r2dock_transfer::engine::CompressionEvent::Failed {
+            id: uuid::Uuid::new_v4(),
+            key: "Diary/entry.wav".into(),
+            message: "Could not read Diary/entry.wav".into(),
+        });
+        let text = wait_for_lines(dir.path(), 5);
+        assert_eq!(text.lines().count(), 5, "{text}");
+        for private in [
+            "Private Folder",
+            "x.mp3",
+            "hidden/clash.txt",
+            "family-photos",
+            "Diary/entry.wav",
+        ] {
+            assert!(!text.contains(private), "{private} leaked: {text}");
+        }
+        // Codes, request ids, and the rest of the message stay useful.
+        assert!(text.contains("would end up with the same name: #"));
+        assert!(text.contains(",req-1,"));
+        assert!(text.contains(",noSuchBucket,No bucket named \u{201c}#"));
+        // The hash matches the one used in the name columns.
+        assert!(text.contains(&log.name("family-photos")));
+
+        // With names allowed, errors are kept as they are.
+        let dir = tempfile::tempdir().unwrap();
+        let log = ActivityLog::start(dir.path().to_path_buf(), true, true);
+        log.start_action("connection_save")
+            .end::<()>(&Err(AppError::new(
+                r2dock_core::ErrorCode::NoSuchBucket,
+                "No bucket named \u{201c}family-photos\u{201d} was found.",
+            )
+            .with_name("family-photos")));
+        let text = wait_for_lines(dir.path(), 2);
+        assert!(text.contains("\u{201c}family-photos\u{201d}"), "{text}");
+    }
+
+    #[test]
+    fn scrubbing_is_leftmost_longest_and_unicode_safe() {
+        let log = ActivityLog::start(std::env::temp_dir(), false, false);
+        let names = vec!["a/b".to_string(), "a/b/c.txt".to_string(), String::new()];
+        let out = log.scrub("x a/b/c.txt y a/b z", &names);
+        assert_eq!(
+            out,
+            format!("x {} y {} z", log.name("a/b/c.txt"), log.name("a/b"))
+        );
+        let out = log.scrub("\u{201c}\u{540d}\u{524d}\u{201d} and \u{201c}", &[]);
+        assert_eq!(
+            out,
+            format!(
+                "\u{201c}{}\u{201d} and \u{201c}",
+                log.name("\u{540d}\u{524d}")
+            )
+        );
+        assert_eq!(
+            log.scrub("\u{e9}t\u{e9}", &["t".into()]),
+            format!("\u{e9}{}\u{e9}", log.name("t"))
+        );
     }
 
     #[test]
