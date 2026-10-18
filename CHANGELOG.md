@@ -2,25 +2,41 @@
 
 All notable changes are listed here. The format follows Keep a Changelog, and the project uses Semantic Versioning.
 
-## [Unreleased]
+## [0.5.0] - 2026-10-18
+
+Fixes every finding of an independent audit of 0.4.1, plus scale work for long queues of large files. Tested with the full suites on macOS, Windows, and Linux, stress runs of 3,000 transfers (1.3 GB) and 160,000 activity rows, and compression runs of hundreds of queued files.
 
 ### Added
 
 - File details show the object's public link by source, like the Cloudflare dashboard: "Public URL" (set in Bucket settings), "Custom domain", or "r2.dev", with copy and open buttons. Custom and r2.dev domains are found through an optional API token (the *Token value* of an R2 token) entered in the connection form. The token is kept in the system keychain like the secret, and R2Dock then also contacts `api.cloudflare.com` (read-only, only when a file's details or public link are requested). "Copy public URL" uses the same link.
+- A short notice when a file is uploaded without compression, with the reason, for example "Intro theme.mp3 can't be compressed: Already compressed (128 kbps). Uploading the original." The upload always continues.
+- Settings > Compression shows "Mix multichannel audio down to stereo or mono" (off by default).
+- Rows show "Cancelling..." or "Pausing..." right after the click, with the conflicting buttons disabled until the transfer stops.
 
 ### Fixed
 
-- A new session-only secret is only used once the connection settings are saved, together with dropping the old client, so a request can never mix old and new keys.
-- A keychain entry left behind by a failed save, whose deletion also failed, is now recorded in a small side file so it is still deleted after a restart.
+- Moves keep the source when it changed during the move, or when the new object is not the copy that was made. Multipart copies keep Content-Disposition, Content-Language, Expires, and the storage class.
+- Compression never drops audio tracks, or channels unless downmixing is on: a file with tracks it cannot keep uploads as it is. Stereo speech becomes mono only when the whole file proves both channels identical, and very quiet audio with opposite channels stays stereo.
+- A single audio track written as MP3 or FLAC is no longer rejected because of its language tag.
+- Transfer recovery after a restart proves what it restores: finished files are recognized by size, time, and file identity, and a compressed copy is used only if its SHA-256 still matches.
+- A compressed copy is checked again before every retry, and a pause or cancel during that check is honored.
 - A long queue of files to compress no longer fills the disk with compressed copies: encoding stays only a few files ahead of uploading.
 - Files that need no compression upload while a long encode runs, even behind hundreds of files waiting for the encoder.
 - Cancel takes effect at once on a slow network (the upload is aborted in the background), and Pause stops a large upload within about 3 seconds instead of waiting for every part in flight.
-- Rows show "Cancelling..." or "Pausing..." right after the click, with the conflicting buttons disabled until the transfer stops.
-- One "can't be compressed" toast per batch of transfers; the batch summary counts the rest.
-- A compressed copy is checked again before every retry, and a pause or cancel during that check is honored.
 - A transfer that finishes while it is being saved can no longer reappear after a restart, and a file found not worth compressing is not encoded again after a restart.
-- The transfer queue is saved as a small change log instead of rewriting the whole queue every second, which cuts disk writes for very large queues.
+- The transfer queue is saved as a small change log instead of rewriting the whole queue every second.
 - FFmpeg runs below normal priority on macOS and Linux, as it already did on Windows.
+- Download names that are the same after Unicode normalization get separate destinations.
+- Preview responses are streamed with a hard size cap.
+- A new session-only secret is only used once the connection settings are saved, together with dropping the old client, so a request can never mix old and new keys.
+- A keychain entry left behind by a failed save, whose deletion also failed, is recorded in a small side file so it is still deleted after a restart.
+- The activity log queue is bounded, write problems show in Settings > Advanced > Logs, and an export that may miss rows still being written says so. Names in error text are hidden when names are off.
+- "Show in bucket" runs in order, so the active account always matches the folder shown.
+- A finished upload stays in the folder view, marked "Uploaded", until the listing refresh shows it, and every affected view refreshes.
+- Text contrast meets WCAG AA in both themes.
+- "Skipped as set in Settings > Compression" is shown only when compression itself stopped the upload.
+- The restart banner explains which transfers continue and which start again.
+- Releases are built from one verified commit, with versions and the installer set checked.
 
 ## [0.4.1] - 2026-10-18
 
