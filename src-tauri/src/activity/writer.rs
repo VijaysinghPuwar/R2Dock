@@ -16,7 +16,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -227,10 +227,7 @@ fn run(
             if stop || batch.len() >= BATCH {
                 break;
             }
-            next = match rx.try_recv() {
-                Ok(m) => Some(m),
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
-            };
+            next = rx.try_recv().ok();
         }
         note_dropped(health, session, &mut batch);
         let dir = dir.read().clone();
