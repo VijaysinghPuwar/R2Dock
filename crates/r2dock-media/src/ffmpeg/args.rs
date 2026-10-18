@@ -216,10 +216,14 @@ pub fn channel_difference(input: &Path) -> Result<Vec<OsString>, ArgsError> {
     push(
         &mut a,
         &[
+            // Two measurements in one decode: the left minus right
+            // difference (filter 2) and the mixed signal (filter 4).
+            "-filter_complex",
+            "[0:a:0]asplit=2[a][b];[a]pan=mono|c0=c0-c1,volumedetect[d];[b]pan=mono|c0=0.5*c0+0.5*c1,volumedetect[s]",
             "-map",
-            "0:a:0",
-            "-af",
-            "pan=mono|c0=c0-c1,volumedetect",
+            "[d]",
+            "-map",
+            "[s]",
             "-progress",
             "pipe:1",
             "-nostats",

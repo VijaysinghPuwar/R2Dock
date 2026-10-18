@@ -725,6 +725,31 @@ async fn speech_that_only_matches_in_the_middle_stays_stereo() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn quiet_opposite_channels_are_not_identical() {
+    let Some((ff, _)) = tools().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("quiet.mp3");
+    // Very quiet audio with right = -left: the difference is below the
+    // absolute limit, but a mono mix would cancel it to silence.
+    make(
+        &ff.bin,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "aevalsrc=0.0002*sin(2*PI*300*t)|-0.0002*sin(2*PI*300*t):s=22050:d=20",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "64k",
+            s(&input),
+        ],
+    );
+    let token = CancellationToken::new();
+    assert!(!ff.channels_identical(&input, &token).await.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn channel_check_can_be_cancelled() {
     let Some((ff, _)) = tools().await else { return };
     let dir = tempfile::tempdir().unwrap();

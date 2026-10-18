@@ -235,8 +235,17 @@ fn rejects_relative_paths_and_unknown_containers() {
 #[test]
 fn channel_difference_reads_the_whole_stream() {
     let args = text(&channel_difference(&abs("in.mp3")).unwrap());
-    assert_eq!(after(&args, "-af"), Some("pan=mono|c0=c0-c1,volumedetect"));
-    assert_eq!(after(&args, "-map"), Some("0:a:0"));
+    let graph = after(&args, "-filter_complex").unwrap();
+    assert!(graph.starts_with("[0:a:0]asplit=2"), "{graph}");
+    assert!(
+        graph.contains("pan=mono|c0=c0-c1,volumedetect[d]"),
+        "{graph}"
+    );
+    assert!(
+        graph.contains("pan=mono|c0=0.5*c0+0.5*c1,volumedetect[s]"),
+        "{graph}"
+    );
+    assert_eq!(after(&args, "-map"), Some("[d]"));
     assert!(
         !args.contains(&"-ss".to_string()),
         "no window: the whole file"

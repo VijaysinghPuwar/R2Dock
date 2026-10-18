@@ -24,6 +24,8 @@ pub const SAMPLE_TEST_MIN_SECS: f64 = 300.0;
 /// tiny differences even when both channels were the same; -60 dBFS is far
 /// above that and far below anything audible as stereo content.
 pub const IDENTICAL_CHANNELS_DB: f64 = -60.0;
+/// How far the channel difference must stay below the audio's own peak.
+pub const SIGNAL_MARGIN_DB: f64 = 40.0;
 
 #[derive(Debug, Error)]
 pub enum EncodeError {
@@ -169,22 +171,40 @@ impl Ffmpeg {
     ) -> Result<bool, EncodeError> {
         let args = args::channel_difference(input)?;
         let lines = self.run_clean(&args, &[input], cancel, |_| {}).await?;
-        Ok(max_volume(&lines).is_some_and(|db| db <= IDENTICAL_CHANNELS_DB))
+        let difference = max_volume(&lines, "Parsed_volumedetect_2");
+        let signal = max_volume(&lines, "Parsed_volumedetect_4");
+        Ok(channels_match(difference, signal))
     }
 }
 
-/// `max_volume` from FFmpeg's volumedetect log lines, in dB (`-inf` is
-/// negative infinity).
-fn max_volume(lines: &[String]) -> Option<f64> {
-    lines.iter().rev().find_map(|l| {
-        let rest = l.split("max_volume:").nth(1)?;
-        let value = rest.trim().trim_end_matches("dB").trim();
-        if value == "-inf" {
-            Some(f64::NEG_INFINITY)
-        } else {
-            value.parse().ok()
+/// The difference must be tiny in absolute terms and also far below the
+/// audio itself, so quiet audio that differs between channels (which an
+/// absolute limit alone would accept) keeps both channels.
+fn channels_match(difference: Option<f64>, signal: Option<f64>) -> bool {
+    match (difference, signal) {
+        (Some(d), Some(s)) => {
+            d <= IDENTICAL_CHANNELS_DB && (d == f64::NEG_INFINITY || d <= s - SIGNAL_MARGIN_DB)
         }
-    })
+        _ => false,
+    }
+}
+
+/// `max_volume` reported by one volumedetect filter, in dB (`-inf` is
+/// negative infinity).
+fn max_volume(lines: &[String], filter: &str) -> Option<f64> {
+    lines
+        .iter()
+        .rev()
+        .filter(|l| l.contains(filter))
+        .find_map(|l| {
+            let rest = l.split("max_volume:").nth(1)?;
+            let value = rest.trim().trim_end_matches("dB").trim();
+            if value == "-inf" {
+                Some(f64::NEG_INFINITY)
+            } else {
+                value.parse().ok()
+            }
+        })
 }
 
 /// A sample window in the middle of the file (the whole file if short).
@@ -218,17 +238,34 @@ mod tests {
     #[test]
     fn parses_max_volume() {
         let lines = |s: &str| s.lines().map(str::to_string).collect::<Vec<_>>();
+        let log = lines(
+            "[Parsed_volumedetect_4 @ 0x2] max_volume: -10.8 dB\n[Parsed_volumedetect_2 @ 0x1] mean_volume: -91.0 dB\n[Parsed_volumedetect_2 @ 0x1] max_volume: -inf dB",
+        );
         assert_eq!(
-            max_volume(&lines(
-                "[Parsed_volumedetect_1 @ 0x1] mean_volume: -91.0 dB\n[Parsed_volumedetect_1 @ 0x1] max_volume: -inf dB"
-            )),
+            max_volume(&log, "Parsed_volumedetect_2"),
             Some(f64::NEG_INFINITY)
         );
-        assert_eq!(
-            max_volume(&lines("[Parsed_volumedetect_1 @ 0x1] max_volume: -12.5 dB")),
-            Some(-12.5)
-        );
+        assert_eq!(max_volume(&log, "Parsed_volumedetect_4"), Some(-10.8));
         // No measurement (an empty track) is never taken as identical.
-        assert_eq!(max_volume(&lines("nothing")), None);
+        assert_eq!(max_volume(&lines("nothing"), "Parsed_volumedetect_2"), None);
+    }
+
+    #[test]
+    fn channel_match_rules() {
+        let inf = f64::NEG_INFINITY;
+        // Bit-identical, and lossy-identical well below the audio.
+        assert!(channels_match(Some(inf), Some(-10.8)));
+        assert!(channels_match(Some(-91.0), Some(-10.8)));
+        // Digital silence in both channels.
+        assert!(channels_match(Some(inf), Some(inf)));
+        // Quiet opposite-phase audio: tiny difference, but the mix is silent.
+        assert!(!channels_match(Some(-68.0), Some(-91.0)));
+        // Quiet audio whose difference is close to its own level.
+        assert!(!channels_match(Some(-70.0), Some(-45.0)));
+        // Audible difference.
+        assert!(!channels_match(Some(-31.0), Some(-3.0)));
+        // Missing measurements never count as identical.
+        assert!(!channels_match(None, Some(-10.0)));
+        assert!(!channels_match(Some(inf), None));
     }
 }
