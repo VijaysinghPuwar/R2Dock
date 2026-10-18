@@ -602,6 +602,7 @@ Downloads:
 - Executable and script extensions are not auto-opened. "Open" on them shows a warning.
 - Apply the platform download marker where feasible (macOS quarantine attribute, Windows Mark of the Web) so OS protections apply **[Verify feasibility in Phase 0]**.
 - Downloaded files never get an executable bit set by the app.
+- Two selected objects never share one local destination. The planner compares destinations by a collision key (Unicode NFC on every platform, plus case folding on macOS and Windows) and gives later duplicates a "Keep both" name. Only the local name changes; object keys are never rewritten. On case-sensitive, normalization-sensitive file systems this can add a suffix that was not strictly needed.
 
 ### 9.7 Logging and redaction
 

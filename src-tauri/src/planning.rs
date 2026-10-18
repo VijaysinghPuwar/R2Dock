@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use futures_util::StreamExt;
 use r2dock_core::keys::{base_name, keep_both_name, parent_prefix};
 use r2dock_core::path_guard::{
-    MAX_COMPONENT_BYTES, PathGuardError, Platform, key_to_relative_path,
-    key_to_relative_path_lossy, truncate_name,
+    CASE_INSENSITIVE_BY_DEFAULT, MAX_COMPONENT_BYTES, PathGuardError, Platform, collision_key,
+    key_to_relative_path, key_to_relative_path_lossy, truncate_name,
 };
 use r2dock_core::policy::ConflictPolicy;
 use r2dock_r2::bulk::ObjectRef;
@@ -268,18 +268,12 @@ pub fn download_items(
     (items, dirs)
 }
 
-/// Windows and macOS file names ignore case, and sanitizing can map two keys
-/// (`a:b` and `a_b`) to one name. Give later duplicates a "Keep both" name so
-/// two downloads never write the same file.
+/// Windows and macOS file names ignore case, APFS treats NFC and NFD spellings
+/// as one name, and sanitizing can map two keys (`a:b` and `a_b`) to one name.
+/// Give later duplicates a "Keep both" name so two downloads never write the
+/// same file. Only the local path changes; object keys stay as they are.
 fn rename_collisions(items: &mut [DownloadItem]) {
-    let fold = |p: &Path| {
-        let s = p.to_string_lossy().into_owned();
-        if cfg!(any(windows, target_os = "macos")) {
-            s.to_lowercase()
-        } else {
-            s
-        }
-    };
+    let fold = |p: &Path| collision_key(p, CASE_INSENSITIVE_BY_DEFAULT);
     let mut taken: HashSet<String> = HashSet::with_capacity(items.len());
     for item in items.iter_mut() {
         if taken.insert(fold(&item.rel_path)) {
@@ -464,6 +458,48 @@ mod tests {
             assert!(seen.insert(s), "{:?} written twice", i.rel_path);
         }
         assert_eq!(items.len(), 4);
+    }
+
+    #[test]
+    fn unicode_equivalent_download_names_get_distinct_destinations() {
+        // NFC "\u{e9}" and NFD "e\u{301}" are one name on APFS and in many tools.
+        let nfc = "a/\u{e9}.txt".to_string();
+        let nfd = "b/e\u{301}.txt".to_string();
+        let objects = vec![o(&nfc), o(&nfd)];
+        let (items, _) = download_items(&objects, &[nfc.clone(), nfd.clone()], &[]);
+        assert_eq!(items.len(), 2);
+        let keys: HashSet<String> = items
+            .iter()
+            .map(|i| r2dock_core::path_guard::collision_key(&i.rel_path, true))
+            .collect();
+        assert_eq!(
+            keys.len(),
+            2,
+            "{:?}",
+            items.iter().map(|i| &i.rel_path).collect::<Vec<_>>()
+        );
+        // Remote keys are never rewritten.
+        assert_eq!(items[0].key, nfc);
+        assert_eq!(items[1].key, nfd);
+        assert_eq!(items[0].rel_path, PathBuf::from("\u{e9}.txt"));
+
+        // Equivalent folder names with the same file name inside.
+        let objects = vec![
+            o("p/\u{e9}/x.txt"),
+            o("p/e\u{301}/x.txt"),
+            o("p/\u{c9}/X.txt"),
+        ];
+        let (items, _) = download_items(&objects, &[], &["p/".into()]);
+        let keys: HashSet<String> = items
+            .iter()
+            .map(|i| {
+                r2dock_core::path_guard::collision_key(
+                    &i.rel_path,
+                    cfg!(any(windows, target_os = "macos")),
+                )
+            })
+            .collect();
+        assert_eq!(keys.len(), 3);
     }
 
     #[test]

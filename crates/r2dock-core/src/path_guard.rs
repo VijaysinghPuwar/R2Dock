@@ -234,6 +234,32 @@ pub fn resolve_file_under_root(root: &Path, rel_file: &Path) -> Result<PathBuf, 
     Ok(target)
 }
 
+/// File systems that ignore letter case by default on this platform
+/// (APFS and HFS+ on macOS, NTFS on Windows).
+pub const CASE_INSENSITIVE_BY_DEFAULT: bool = cfg!(any(windows, target_os = "macos"));
+
+/// A comparison key for "would these two relative paths name the same file
+/// on disk". Used only to detect collisions between planned destinations; it
+/// never changes the path that is written or any remote object key.
+///
+/// Unicode normalization is always applied (APFS and many tools treat NFC and
+/// NFD spellings as one name, and a spare suffix on other systems is harmless).
+/// Letter case is folded when `fold_case` is true.
+pub fn collision_key(path: &Path, fold_case: bool) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let text = path.to_string_lossy();
+    if fold_case {
+        // Decompose first so case mapping sees base letters, then recompose.
+        text.nfd()
+            .collect::<String>()
+            .to_lowercase()
+            .nfc()
+            .collect()
+    } else {
+        text.nfc().collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,7 +423,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn collision_keys_match_equivalent_names() {
+        let k = |s: &str, fold: bool| collision_key(Path::new(s), fold);
+        // NFC and NFD spellings are always one name.
+        assert_eq!(k("\u{e9}.txt", false), k("e\u{301}.txt", false));
+        assert_eq!(k("caf\u{e9}/a", false), k("cafe\u{301}/a", false));
+        // Combining marks in a different canonical order.
+        assert_eq!(k("a\u{323}\u{307}", false), k("a\u{307}\u{323}", false));
+        // Case only folds when asked.
+        assert_ne!(k("A.txt", false), k("a.txt", false));
+        assert_eq!(k("A.txt", true), k("a.txt", true));
+        assert_eq!(k("\u{c9}.txt", true), k("e\u{301}.txt", true));
+        // Genuinely different names stay different.
+        assert_ne!(k("e.txt", true), k("\u{e9}.txt", true));
+        assert_ne!(k("a/b", true), k("ab", true));
+    }
+
     proptest! {
+        #[test]
+        fn collision_key_ignores_normalization_form(name in "\\PC{0,24}", fold in any::<bool>()) {
+            use unicode_normalization::UnicodeNormalization;
+            let nfc: String = name.nfc().collect();
+            let nfd: String = name.nfd().collect();
+            prop_assert_eq!(
+                collision_key(Path::new(&nfc), fold),
+                collision_key(Path::new(&nfd), fold)
+            );
+        }
+
         #[test]
         fn lossy_never_escapes_root(key in "(?s).{0,80}") {
             let p = key_to_relative_path_lossy(&key, Platform::current());
