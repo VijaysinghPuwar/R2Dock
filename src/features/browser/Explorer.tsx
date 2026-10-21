@@ -5,14 +5,14 @@ import { Button } from "../../components/Button";
 import { Banner, EmptyState } from "../../components/Feedback";
 import { ContextMenu } from "../../components/Menu";
 import { toast } from "../../components/toastStore";
-import { errorMessage, prefixSize } from "../../ipc/commands";
+import { errorMessage } from "../../ipc/commands";
 import type { ConnectionSummary } from "../../ipc/bindings/ConnectionSummary";
 import { errorCode } from "../../lib/errors";
 import { folderLabel } from "../../lib/keys";
 import { formatBytes, formatCount, joinDot } from "../../lib/format";
 import { hasMod } from "../../lib/platform";
 import { useNavStore } from "../../app/navStore";
-import { qk, useActiveConnection, usePlatform, usePreferences, useUpdatePreferences } from "../../app/queries";
+import { calculatePrefixSize, useActiveConnection, usePlatform, usePreferences, useUpdatePreferences } from "../../app/queries";
 import { refreshCurrentView } from "../../app/refresh";
 import { useUiStore } from "../../app/uiStore";
 import { ErrorView, useDelayed } from "../connections/ErrorStates";
@@ -50,6 +50,9 @@ export function Explorer() {
   if (!connection || !bucket) return null;
   return <ExplorerView connection={connection} bucket={bucket} prefix={prefix} />;
 }
+
+/** The folder the explorer last showed, kept across remounts. */
+let lastExplorerLoc: string | null = null;
 
 function ExplorerView({ connection, bucket, prefix }: { connection: ConnectionSummary; bucket: string; prefix: string }) {
   const client = useQueryClient();
@@ -91,7 +94,13 @@ function ExplorerView({ connection, bucket, prefix }: { connection: ConnectionSu
     if (lastLoc.current !== locKey) {
       lastLoc.current = locKey;
       useBrowserStore.getState().resetForLocation();
+    } else if (lastExplorerLoc !== null && lastExplorerLoc !== locKey) {
+      // Opened again at another folder after another page: the search
+      // typed in the old folder must not filter (or search) this one.
+      useBrowserStore.getState().setSearch("");
+      useBrowserStore.getState().setScope("folder");
     }
+    lastExplorerLoc = locKey;
   }, [locKey]);
 
   useEffect(() => {
@@ -121,8 +130,7 @@ function ExplorerView({ connection, bucket, prefix }: { connection: ConnectionSu
 
   const calculateSize = async () => {
     try {
-      const size = await prefixSize(connection.id, bucket, prefix);
-      client.setQueryData(qk.prefixSize(connection.id, bucket, prefix), size);
+      const size = await calculatePrefixSize(client, connection.id, bucket, prefix);
       toast.neutral(
         `${folderLabel(bucket, prefix)}: ${joinDot([`${formatCount(size.objects)} objects`, formatBytes(size.bytes)])}`,
       );

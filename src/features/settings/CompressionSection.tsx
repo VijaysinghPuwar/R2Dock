@@ -1,23 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AudioLines, Download, FolderOpen, Trash2, X } from "lucide-react";
-import { useState } from "react";
 import { qk, usePreferences, useUpdatePreferences } from "../../app/queries";
 import { Button } from "../../components/Button";
 import { SegmentedControl, Switch } from "../../components/Controls";
 import { Banner } from "../../components/Feedback";
 import { Select } from "../../components/Fields";
 import { ProgressBar } from "../../components/ProgressBar";
-import { toast } from "../../components/toastStore";
 import {
   compressionCancelInstall,
-  compressionInstall,
-  compressionPreview,
   compressionRemove,
   compressionStatus,
   compressionUseDownloaded,
   compressionUseSystem,
-  errorMessage,
-  isAppError,
 } from "../../ipc/commands";
 import type { AudioSettings } from "../../ipc/bindings/AudioSettings";
 import type { CompressionFailure } from "../../ipc/bindings/CompressionFailure";
@@ -27,7 +21,6 @@ import type { License } from "../../ipc/bindings/License";
 import type { LosslessAction } from "../../ipc/bindings/LosslessAction";
 import type { Mode } from "../../ipc/bindings/Mode";
 import type { MusicQuality } from "../../ipc/bindings/MusicQuality";
-import type { PreviewSample } from "../../ipc/bindings/PreviewSample";
 import type { SpeechQuality } from "../../ipc/bindings/SpeechQuality";
 import type { VideoCodec } from "../../ipc/bindings/VideoCodec";
 import type { VideoSettings } from "../../ipc/bindings/VideoSettings";
@@ -35,6 +28,7 @@ import type { VideoSize } from "../../ipc/bindings/VideoSize";
 import { formatBytes } from "../../lib/format";
 import { mediaUrl } from "../../lib/media";
 import { NumberSetting } from "./NumberSetting";
+import { runToolsAction, startPreview, startToolsInstall, useToolsInstallStore } from "./toolsInstall";
 import { ControlRow, Section } from "./SettingsLayout";
 
 const LICENSE_TEXT: Record<License, string> = {
@@ -69,38 +63,16 @@ function isFailure(v: string): v is CompressionFailure {
 /** The FFmpeg block: not installed, installing, ready, or unusable. */
 function ToolsBlock({ status }: { status: CompressionStatus | undefined }) {
   const client = useQueryClient();
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [working, setWorking] = useState(false);
-  const set = (s: CompressionStatus) => client.setQueryData(qk.compression, s);
+  const progress = useToolsInstallStore((s) => s.progress);
+  const working = useToolsInstallStore((s) => s.working);
 
-  const install = async () => {
-    setProgress({ done: 0, total: status?.downloadBytes ?? 0 });
-    try {
-      set(await compressionInstall((p) => setProgress({ done: p.done, total: p.total })));
-      toast.success("Compression tools installed.");
-    } catch (e) {
-      if (!(isAppError(e) && e.code === "cancelled")) toast.danger(errorMessage(e));
-      void client.invalidateQueries({ queryKey: qk.compression });
-    } finally {
-      setProgress(null);
-    }
-  };
-  const run = async (call: () => Promise<CompressionStatus | null>) => {
-    setWorking(true);
-    try {
-      const s = await call();
-      if (s) set(s);
-    } catch (e) {
-      toast.danger(errorMessage(e));
-    } finally {
-      setWorking(false);
-    }
-  };
+  const install = () => startToolsInstall(client, status?.downloadBytes ?? 0);
+  const run = (call: () => Promise<CompressionStatus | null>) => runToolsAction(client, call);
 
   if (!status) return <p className="secondary">Checking the compression tools...</p>;
 
-  // Progress lives in this component, so after leaving the page and coming
-  // back an install still running shows without numbers.
+  // Progress lives in a store, so leaving the page keeps it. An install
+  // this window did not start (e.g. before a reload) shows without numbers.
   if (progress || status.state === "installing") {
     const pct = progress && progress.total > 0 ? Math.floor((progress.done / progress.total) * 100) : 0;
     return (
@@ -161,7 +133,7 @@ function ToolsBlock({ status }: { status: CompressionStatus | undefined }) {
       </p>
       <div className="log-location-actions">
         {status.downloadBytes !== null && (
-          <Button size="sm" variant="primary" icon={<Download size={14} />} onClick={() => void install()}>
+          <Button size="sm" variant="primary" icon={<Download size={14} />} disabled={working} onClick={() => void install()}>
             Install compression tools
           </Button>
         )}
@@ -175,20 +147,9 @@ function ToolsBlock({ status }: { status: CompressionStatus | undefined }) {
 
 /** "Compare quality": 30 second samples of one file at each preset. */
 function ComparePreview({ ready }: { ready: boolean }) {
-  const [samples, setSamples] = useState<PreviewSample[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const choose = async () => {
-    setBusy(true);
-    try {
-      const result = await compressionPreview();
-      if (result) setSamples(result);
-    } catch (e) {
-      // A newer comparison stopped this one.
-      if (!(isAppError(e) && e.code === "cancelled")) toast.danger(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const samples = useToolsInstallStore((s) => s.samples);
+  const busy = useToolsInstallStore((s) => s.previewBusy);
+  const choose = startPreview;
   return (
     <div className="log-location">
       <span>Compare quality</span>
@@ -224,6 +185,9 @@ export function CompressionSection() {
   const status = useQuery({
     queryKey: qk.compression,
     queryFn: compressionStatus,
+    // Check again each time the page opens: an install may have started or
+    // ended while it was closed.
+    staleTime: 0,
     // An install started before this page was opened reports nothing here,
     // so check until it ends.
     refetchInterval: (q) => (q.state.data?.state === "installing" ? 1000 : false),

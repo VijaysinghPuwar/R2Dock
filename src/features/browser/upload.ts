@@ -52,13 +52,21 @@ export async function startPlan(
   }
 }
 
+let preparingCount = 0;
+
 /** Prepare a selection; show the review dialog when needed, otherwise start right away. */
 export async function uploadSelection(selection: Selection, target: UploadTarget): Promise<void> {
-  const store = useUploadStore.getState();
-  store.setPreparing(true);
+  // Several drops can be prepared at once; busy until the last one ends.
+  preparingCount += 1;
+  useUploadStore.getState().setPreparing(true);
   try {
     const plan = await uploadPrepare(selection.id, target.connectionId, target.bucket, target.prefix);
     if (plan.needsReview) {
+      // Never replace a review the user is still looking at.
+      if (useUploadStore.getState().review) {
+        toast.warning("Finish the open upload review first, then add more files.");
+        return;
+      }
       useUploadStore.getState().setReview({ plan, target, selection });
       return;
     }
@@ -70,7 +78,8 @@ export async function uploadSelection(selection: Selection, target: UploadTarget
   } catch (e) {
     toast.danger(errorMessage(e));
   } finally {
-    useUploadStore.getState().setPreparing(false);
+    preparingCount -= 1;
+    if (preparingCount === 0) useUploadStore.getState().setPreparing(false);
   }
 }
 

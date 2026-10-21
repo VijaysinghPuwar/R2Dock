@@ -178,14 +178,19 @@ impl CompressionService {
             Ok(fetch) => install::install(&self.tools_root, pkg, &fetch, &token, on_progress).await,
             Err(e) => Err(e),
         };
-        *self.installing.lock() = None;
-        let result = result.map_err(|e| tools_error(&e));
+        let mut result = result.map(|_| ()).map_err(|e| tools_error(&e));
         if result.is_ok() {
             // The download replaces a picked system FFmpeg.
-            state.update_settings(|s| s.ffmpeg_path = None).await?;
+            result = state
+                .update_settings(|s| s.ffmpeg_path = None)
+                .await
+                .map(|_| ());
         }
         self.refresh(state).await;
-        result.map(|_| ())
+        // Cleared only now: until the new tools are checked, status keeps
+        // saying "installing" instead of "not installed" for a moment.
+        *self.installing.lock() = None;
+        result
     }
 
     pub fn cancel_install(&self) {

@@ -14,7 +14,7 @@ import { SOURCE_LABEL, mayHavePublicLink, publicLinkHint } from "./publicLink";
 import type { ConnectionSummary } from "../../ipc/bindings/ConnectionSummary";
 import type { ObjectEntry } from "../../ipc/bindings/ObjectEntry";
 import type { PrefixSize } from "../../ipc/bindings/PrefixSize";
-import { qk, usePreferences } from "../../app/queries";
+import { calculatePrefixSize, qk, useCalculatingPrefixSize, usePreferences } from "../../app/queries";
 import { useNavStore } from "../../app/navStore";
 import { useUiStore } from "../../app/uiStore";
 import { THUMBNAIL_LIMIT, previewKind } from "../../lib/fileTypes";
@@ -109,16 +109,12 @@ function PrefixSizeRow({ ctx, prefix }: { ctx: Ctx; prefix: string }) {
   const client = useQueryClient();
   const key = qk.prefixSize(ctx.connectionId, ctx.bucket, prefix);
   const { data } = useQuery<PrefixSize>({ queryKey: key, queryFn: () => prefixSize(ctx.connectionId, ctx.bucket, prefix), enabled: false, staleTime: Infinity });
-  const [busy, setBusy] = useState(false);
+  const busy = useCalculatingPrefixSize(ctx.connectionId, ctx.bucket, prefix);
   const calculate = async () => {
-    setBusy(true);
     try {
-      const result = await prefixSize(ctx.connectionId, ctx.bucket, prefix);
-      client.setQueryData(key, result);
+      await calculatePrefixSize(client, ctx.connectionId, ctx.bucket, prefix);
     } catch (e) {
       toast.danger(errorMessage(e));
-    } finally {
-      setBusy(false);
     }
   };
   return (

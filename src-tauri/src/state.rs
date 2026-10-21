@@ -67,6 +67,14 @@ impl<T> Registry<T> {
         let (t, v) = self.items.lock().remove(id)?;
         (t.elapsed() < TOKEN_TTL).then_some(v)
     }
+
+    /// Put a taken value back under its id, so a step that failed after
+    /// `take` can be tried again.
+    pub fn restore(&self, id: &str, value: T) {
+        self.items
+            .lock()
+            .insert(id.to_owned(), (Instant::now(), value));
+    }
 }
 
 impl<T: Clone> Registry<T> {
@@ -216,6 +224,16 @@ mod tests {
         }
         assert!(r.items.lock().len() <= REGISTRY_CAP);
         assert_eq!(r.take("unknown"), None);
+    }
+
+    #[test]
+    fn registry_value_can_be_restored_after_take() {
+        let r: Registry<u32> = Registry::default();
+        let id = r.insert(7);
+        let v = r.take(&id).unwrap();
+        r.restore(&id, v);
+        assert_eq!(r.take(&id), Some(7));
+        assert_eq!(r.take(&id), None);
     }
 
     #[tokio::test]

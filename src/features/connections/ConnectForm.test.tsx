@@ -59,7 +59,9 @@ beforeEach(() => {
   commands.connectionSave.mockReset();
 });
 
-describe("ConnectForm", () => {
+// These type long keys one key at a time, which is slow when every test
+// file runs at once.
+describe("ConnectForm", { timeout: 15_000 }, () => {
   it("keeps the secret after a failed test so it can be retried, and shows technical details on request", async () => {
     const user = userEvent.setup();
     commands.connectionTest.mockRejectedValue({
