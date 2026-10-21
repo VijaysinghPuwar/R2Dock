@@ -2,6 +2,21 @@
 
 All notable changes are listed here. The format follows Keep a Changelog, and the project uses Semantic Versioning.
 
+## [0.5.1] - 2026-10-21
+
+Fixes glitches found in the activity logs and in a review of what happens when you move around the app while work is running.
+
+### Fixed
+
+- Leaving Settings > Compression during the compression tools download no longer loses it. Coming back shows the same download with its progress, instead of an Install button that failed with "The tools are already being installed." The status also stays "installing" until the new tools are checked, so the Install button no longer flashes at the end.
+- "Compare quality" keeps its samples and its busy state when you leave the page and come back. Remove tools and Use FFmpeg from my system can no longer run twice at once, and Install waits for them.
+- File pickers belong to the app window, so the app cannot be used behind an open picker.
+- Back, Forward, and Settings shortcuts no longer act behind an open dialog. New folder and Go to path close when the folder shown changes, instead of creating the folder somewhere else or reopening later.
+- Search text and scope no longer carry over into another bucket or folder after visiting another page.
+- Dropping more files while an upload review is open no longer replaces that review without a word. The upload button stays busy until every drop is prepared.
+- If creating empty folders fails at the start of an upload, Upload can be clicked again instead of saying the upload expired.
+- Folder size shows "Calculating..." only for the folder being calculated, and every Calculate button for one folder shares one listing.
+
 ## [0.5.0] - 2026-10-18
 
 Fixes every finding of an independent audit of 0.4.1, plus scale work for long queues of large files. Tested with the full suites on macOS, Windows, and Linux, stress runs of 3,000 transfers (1.3 GB) and 160,000 activity rows, and compression runs of hundreds of queued files.

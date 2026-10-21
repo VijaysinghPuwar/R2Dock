@@ -8,6 +8,7 @@ import type { Preferences } from "../../ipc/bindings/Preferences";
 import type { SettingsView } from "../../ipc/bindings/SettingsView";
 import { renderWithProviders, testQueryClient } from "../../test/utils";
 import { CompressionSection } from "./CompressionSection";
+import { useToolsInstallStore } from "./toolsInstall";
 
 const notInstalled: CompressionStatus = {
   state: "notInstalled",
@@ -61,6 +62,7 @@ function setup() {
 
 describe("CompressionSection", () => {
   beforeEach(() => {
+    useToolsInstallStore.setState({ progress: null, working: false, previewBusy: false, samples: null });
     m.status.mockReset();
     m.install.mockReset();
     m.cancelInstall.mockReset();
@@ -103,6 +105,35 @@ describe("CompressionSection", () => {
     finish!(ready);
     expect(await screen.findByText(/FFmpeg 9\.0\.2 \(LGPL 3\), downloaded and checked by R2Dock/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove tools" })).toBeInTheDocument();
+  });
+
+  it("keeps the install going after leaving the page and coming back", async () => {
+    m.status.mockResolvedValue(notInstalled);
+    let report: ((p: InstallProgress) => void) | undefined;
+    let finish: ((s: CompressionStatus) => void) | undefined;
+    m.install.mockImplementation((cb: (p: InstallProgress) => void) => {
+      report = cb;
+      return new Promise<CompressionStatus>((resolve) => {
+        finish = resolve;
+      });
+    });
+    const user = userEvent.setup();
+    const client = testQueryClient();
+    client.setQueryData(qk.settings, view());
+    const first = renderWithProviders(<CompressionSection />, { client });
+    await user.click(await screen.findByRole("button", { name: "Install compression tools" }));
+    await waitFor(() => expect(report).toBeDefined());
+    first.unmount();
+    // The backend still reports the download while the page is closed.
+    m.status.mockResolvedValue({ ...notInstalled, state: "installing" });
+    report!({ done: 8_000_000, total: 17_547_000 });
+    renderWithProviders(<CompressionSection />, { client });
+    expect(await screen.findByText(/Downloading compression tools: 8\.0 MB of 17\.5 MB/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Install compression tools" })).not.toBeInTheDocument();
+    expect(m.install).toHaveBeenCalledTimes(1);
+    m.status.mockResolvedValue(ready);
+    finish!(ready);
+    expect(await screen.findByText(/downloaded and checked by R2Dock/)).toBeInTheDocument();
   });
 
   it("shows an install started before the page was opened", async () => {

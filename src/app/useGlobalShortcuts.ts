@@ -46,7 +46,11 @@ export function useGlobalShortcuts() {
         return;
       }
 
-      if (mod && key === ",") {
+      // Moving to another page or folder under an open dialog would leave the
+      // dialog acting on a place no longer shown.
+      const dialogOpen = anyDialogOpen();
+
+      if (mod && key === "," && !dialogOpen) {
         e.preventDefault();
         nav.openSettings();
         return;
@@ -59,14 +63,13 @@ export function useGlobalShortcuts() {
       }
 
       if (usePreviewStore.getState().open) return;
-      const dialogOpen = anyDialogOpen();
 
-      if ((mod && key === "[") || (e.altKey && key === "ArrowLeft" && !editable)) {
+      if (!dialogOpen && ((mod && key === "[") || (e.altKey && key === "ArrowLeft" && !editable))) {
         e.preventDefault();
         nav.goBack();
         return;
       }
-      if ((mod && key === "]") || (e.altKey && key === "ArrowRight" && !editable)) {
+      if (!dialogOpen && ((mod && key === "]") || (e.altKey && key === "ArrowRight" && !editable))) {
         e.preventDefault();
         nav.goForward();
         return;
