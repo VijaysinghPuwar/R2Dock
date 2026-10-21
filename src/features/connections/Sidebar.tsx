@@ -26,7 +26,7 @@ import type { PrefixSize } from "../../ipc/bindings/PrefixSize";
 import { formatAgo, formatBytes, formatCount, joinDot, shortId } from "../../lib/format";
 import { folderLabel } from "../../lib/keys";
 import { useNavStore, type View } from "../../app/navStore";
-import { qk, useActiveConnection, useBuckets, useConnections } from "../../app/queries";
+import { calculatePrefixSize, qk, useActiveConnection, useBuckets, useCalculatingPrefixSize, useConnections } from "../../app/queries";
 import { useUiStore } from "../../app/uiStore";
 import { isMoving } from "../transfers/stats";
 import { useTransferStore } from "../transfers/transferStore";
@@ -187,11 +187,12 @@ function StorageSummary() {
   const connection = useActiveConnection();
   const loc = useNavStore((s) => s.loc);
   const client = useQueryClient();
-  const [busy, setBusy] = useState(false);
   const now = useNow(30_000);
   const bucket = loc.view === "browser" ? loc.bucket : null;
   const connId = connection?.id ?? "";
   const key = qk.prefixSize(connId, bucket ?? "", loc.prefix);
+  // Busy for this folder only, wherever the calculation was started.
+  const busy = useCalculatingPrefixSize(connId, bucket ?? "", loc.prefix);
   const { data } = useQuery<PrefixSize>({
     queryKey: key,
     queryFn: () => prefixSize(connId, bucket ?? "", loc.prefix),
@@ -202,14 +203,10 @@ function StorageSummary() {
   if (!connection || !bucket) return null;
 
   const calculate = async () => {
-    setBusy(true);
     try {
-      const size = await prefixSize(connection.id, bucket, loc.prefix);
-      client.setQueryData(key, size);
+      await calculatePrefixSize(client, connection.id, bucket, loc.prefix);
     } catch (e) {
       toast.danger(errorMessage(e));
-    } finally {
-      setBusy(false);
     }
   };
 

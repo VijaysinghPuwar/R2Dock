@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { ViewMode } from "../ipc/bindings/ViewMode";
+import { useNavStore } from "./navStore";
 
 export type ConnectDialogState =
   | { mode: "new"; showHelp: boolean }
@@ -70,3 +71,14 @@ export const useUiStore = create<UiState>((set) => ({
   bucketSettings: null,
   setBucketSettings: (bucketSettings) => set({ bucketSettings }),
 }));
+
+// New folder and Go to path act on the folder shown when they opened, so a
+// move elsewhere (back/forward, Settings) closes them instead of retargeting
+// them or bringing them back later.
+useNavStore.subscribe((s, prev) => {
+  const a = s.loc;
+  const b = prev.loc;
+  if (a.view === b.view && a.bucket === b.bucket && a.prefix === b.prefix) return;
+  const ui = useUiStore.getState();
+  if (ui.newFolderOpen || ui.goToPathOpen) useUiStore.setState({ newFolderOpen: false, goToPathOpen: false });
+});

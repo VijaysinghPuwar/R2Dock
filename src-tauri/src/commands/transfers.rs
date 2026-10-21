@@ -176,13 +176,19 @@ async fn upload_start_inner(
         .ok_or_else(|| AppError::not_found("This upload expired. Choose the files again."))?;
     if !plan.markers.is_empty() {
         let (bucket, markers) = (plan.bucket.clone(), plan.markers.clone());
-        with_client(state, plan.connection, |c| async move {
+        let created = with_client(state, plan.connection, |c| async move {
             for m in markers {
                 c.create_folder(&bucket, &m).await?;
             }
             Ok(())
         })
-        .await?;
+        .await;
+        if let Err(e) = created {
+            // Keep the plan so Upload can be clicked again (creating a
+            // marker twice is harmless).
+            state.uploads.restore(&plan_id, plan);
+            return Err(e);
+        }
     }
     let prefs = state.settings.read().preferences.compression;
     let request = r2dock_transfer::CompressionRequest {

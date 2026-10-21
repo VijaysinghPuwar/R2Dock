@@ -1,9 +1,10 @@
-import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryClient, useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   appInfo,
   bucketList,
   connectionList,
   errorMessage,
+  prefixSize,
   settingsGet,
   settingsSet,
 } from "../ipc/commands";
@@ -12,6 +13,7 @@ import type { ConnectionSummary } from "../ipc/bindings/ConnectionSummary";
 import type { Preferences } from "../ipc/bindings/Preferences";
 import type { SettingsView } from "../ipc/bindings/SettingsView";
 import type { BucketEntry } from "../ipc/bindings/BucketEntry";
+import type { PrefixSize } from "../ipc/bindings/PrefixSize";
 import { toast } from "../components/toastStore";
 import { guessPlatform } from "../lib/platform";
 
@@ -196,4 +198,23 @@ export function useBuckets(connection: ConnectionSummary | null) {
   // Without a successful listing, manual buckets are still usable.
   const usable = rows.length > 0;
   return { ...query, rows, usable };
+}
+
+/**
+ * Calculate a folder's size. Every button that asks for the same folder
+ * shares one listing while it runs (each one lists every object, which R2
+ * may bill).
+ */
+export function calculatePrefixSize(client: QueryClient, connectionId: string, bucket: string, prefix: string) {
+  return client.fetchQuery<PrefixSize>({
+    queryKey: qk.prefixSize(connectionId, bucket, prefix),
+    queryFn: () => prefixSize(connectionId, bucket, prefix),
+    staleTime: 0,
+    gcTime: Infinity,
+  });
+}
+
+/** Whether that folder's size is being calculated now, from any button. */
+export function useCalculatingPrefixSize(connectionId: string, bucket: string, prefix: string) {
+  return useIsFetching({ queryKey: qk.prefixSize(connectionId, bucket, prefix), exact: true }) > 0;
 }
