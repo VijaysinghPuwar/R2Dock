@@ -15,6 +15,7 @@ Fixes glitches found in the activity logs and in a review of what happens when y
 - Search text and scope no longer carry over into another bucket or folder after visiting another page.
 - Dropping more files while an upload review is open no longer replaces that review without a word. The upload button stays busy until every drop is prepared.
 - If creating empty folders fails at the start of an upload, Upload can be clicked again instead of saying the upload expired.
+- Updated rustls-webpki and webpki-root-certs for RUSTSEC-2026-0382 and RUSTSEC-2026-0383 (certificate checks could trust distrusted intermediates).
 - Folder size shows "Calculating..." only for the folder being calculated, and every Calculate button for one folder shares one listing.
 
 ## [0.5.0] - 2026-10-18
