@@ -19,13 +19,13 @@ function plan(planId: string): UploadPlan {
     folders: 0,
     bytes: 10,
     conflicts: 1,
-    skipped: 0,
+    skipped: [],
     hasFolders: false,
     needsReview: true,
     tooMany: false,
     defaultPolicy: "ask",
     compression: null,
-  } as UploadPlan;
+  };
 }
 
 const target = { connectionId: "c", connectionName: "Studio", bucket: "media", prefix: "" };
