@@ -12,7 +12,7 @@ Browse, upload, and manage your buckets like a regular drive. Your keys never le
 [![License: MIT](https://img.shields.io/badge/license-MIT-2A2832)](LICENSE)
 ![Platforms](https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-supported-2A2832)
 
-[Download](https://github.com/VijaysinghPuwar/R2Dock/releases/latest) · [Video walkthrough](#video-walkthrough) · [How it works](#how-it-works) · [Logs](#logs) · [Security](#security) · [Build from source](#build-from-source)
+[Download](https://github.com/VijaysinghPuwar/R2Dock/releases/latest) · [Videos](#videos) · [How it works](#how-it-works) · [Logs](#logs) · [Security](#security) · [Build from source](#build-from-source)
 
 <img src="docs/screenshots/demo.gif" width="900" alt="R2Dock walkthrough: browse a bucket, preview files, see a file's custom domain link, upload audio with compression, and open Compression settings">
 
@@ -20,13 +20,19 @@ Browse, upload, and manage your buckets like a regular drive. Your keys never le
 
 </div>
 
-## Video walkthrough
+## Videos
+
+<a href="https://www.youtube.com/watch?v=2JVQNh9Vd-o">
+  <img src="https://img.youtube.com/vi/2JVQNh9Vd-o/maxresdefault.jpg" width="720" alt="R2Dock System Design, Explained Step by Step for Beginners, on YouTube">
+</a>
+
+**[R2Dock System Design, Explained Step by Step for Beginners](https://www.youtube.com/watch?v=2JVQNh9Vd-o)** (1 h 20 min, 21 chapters). System design from first principles, by designing R2Dock itself in 16 steps: requirements and the real limits (part sizes, the 10,000-part rule), the trust boundary, multipart uploads and resumable downloads, a semaphore and a fair scheduler, retries with backoff and jitter, crash-safe saves, security, testing, and trade-offs. No experience needed. Every code panel on screen is real code from release 0.5.1.
 
 <a href="https://www.youtube.com/watch?v=ki4-QJ7QG8Q">
   <img src="https://img.youtube.com/vi/ki4-QJ7QG8Q/maxresdefault.jpg" width="720" alt="Inside R2Dock: How It Really Works, a full walkthrough of the R2Dock code base on YouTube">
 </a>
 
-**[Inside R2Dock: How It Really Works](https://www.youtube.com/watch?v=ki4-QJ7QG8Q)** (1 h 30 min, 18 chapters). A guided tour of the code base: the Rust core and the Tauri trust boundary, async Rust with Tokio, talking to R2, multipart uploads, resumable downloads, crash recovery, audio and video compression, security, the React frontend, and testing. Every code panel on screen is real code from release 0.5.1.
+**[Inside R2Dock: How It Really Works](https://www.youtube.com/watch?v=ki4-QJ7QG8Q)** (1 h 30 min, 19 chapters). A guided tour of the code base: the Rust core and the Tauri trust boundary, async Rust with Tokio, talking to R2, multipart uploads, resumable downloads, crash recovery, audio and video compression, security, the React frontend, and testing. Every code panel on screen is real code from release 0.5.1.
 
 ## What it does
 
