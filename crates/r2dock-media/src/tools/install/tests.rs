@@ -297,6 +297,37 @@ async fn cancel_leaves_nothing() {
     assert!(leftovers(dir.path()).is_empty());
 }
 
+/// An app closed during the download leaves its staging folder behind
+/// (seen as 161 MB in a user's tools folder); the next install and the
+/// startup sweep delete it, and keep the installed tools.
+#[tokio::test]
+async fn leftover_staging_is_swept() {
+    let dir = tempfile::tempdir().unwrap();
+    let (pkg, fetch, _, _) = fixture();
+    install_ok(dir.path(), &pkg, &fetch).await;
+    std::fs::create_dir(dir.path().join(".staging-closed")).unwrap();
+    std::fs::write(dir.path().join(".staging-closed").join("ffmpeg.exe"), b"x").unwrap();
+    std::fs::create_dir(dir.path().join(".old-left")).unwrap();
+    let before = leftovers(dir.path());
+    sweep_leftovers(dir.path());
+    let mut after = leftovers(dir.path());
+    after.sort();
+    assert!(before.len() > after.len(), "{before:?}");
+    assert!(after.iter().all(|n| !n.starts_with('.')), "{after:?}");
+    check_installed(dir.path(), Some(&pkg)).unwrap();
+
+    std::fs::create_dir(dir.path().join(".staging-closed")).unwrap();
+    install_ok(dir.path(), &pkg, &fetch).await;
+    assert!(
+        leftovers(dir.path())
+            .iter()
+            .all(|n| !n.starts_with(".staging-")),
+        "{:?}",
+        leftovers(dir.path())
+    );
+    sweep_leftovers(&dir.path().join("missing"));
+}
+
 #[tokio::test]
 async fn remove_deletes_everything() {
     let dir = tempfile::tempdir().unwrap();

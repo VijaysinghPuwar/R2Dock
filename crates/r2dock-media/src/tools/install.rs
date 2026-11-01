@@ -7,6 +7,7 @@
 //! ffmpeg-9.0.2/ffprobe[.exe]
 //! ffmpeg-9.0.2/installed.json   sizes, modification times, and SHA-256
 //! .staging-*/                   work in progress, deleted on any failure
+//!                               (or on the next start, if the app was closed)
 //! .old-*/                       a replaced install not yet deleted
 //! ```
 //!
@@ -273,7 +274,7 @@ pub async fn install<F: Fetch>(
     mut on_progress: impl FnMut(u64, u64) + Send,
 ) -> Result<Tools, ToolsError> {
     std::fs::create_dir_all(root)?;
-    sweep_old(root);
+    sweep_leftovers(root);
     // Deleted automatically if anything below fails or is cancelled.
     let staging = tempfile::Builder::new()
         .prefix(".staging-")
@@ -314,13 +315,17 @@ pub async fn install<F: Fetch>(
     check_installed(root, Some(pkg))
 }
 
-/// Delete older installs left aside by an earlier replace. Best effort.
-fn sweep_old(root: &Path) {
+/// Delete older installs left aside by an earlier replace, and unfinished
+/// installs left by an app that was closed during the download (its
+/// staging folder is never dropped). Best effort. Call only while no
+/// install runs.
+pub fn sweep_leftovers(root: &Path) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
     for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().starts_with(OLD_PREFIX) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(OLD_PREFIX) || name.starts_with(".staging-") {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }

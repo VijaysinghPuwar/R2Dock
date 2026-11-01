@@ -77,6 +77,16 @@ impl CompressionService {
         }
     }
 
+    /// Delete unfinished installs left by an app closed during the
+    /// download. Holds the install slot, so an install started meanwhile
+    /// waits instead of losing its staging folder.
+    pub fn sweep_leftovers(&self) {
+        let slot = self.installing.lock();
+        if slot.is_none() {
+            install::sweep_leftovers(&self.tools_root);
+        }
+    }
+
     /// Give the engine the current tools and encode limit (or none).
     pub fn apply(&self, state: &AppState) {
         let limit = usize::from(state.settings.read().preferences.compression.encode_limit);

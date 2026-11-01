@@ -77,25 +77,33 @@ impl Ffmpeg {
         self
     }
 
-    /// Run and turn a failure into a message without local folders.
+    /// Run and turn a failure into a message without local folders. FFmpeg
+    /// stopped from outside (not by R2Dock) is run once more before it
+    /// counts as a failure; every run overwrites its own output.
     pub(crate) async fn run_clean(
         &self,
         args: &[std::ffi::OsString],
         paths: &[&Path],
         cancel: &CancellationToken,
-        on_progress: impl FnMut(progress::Progress) + Send,
+        mut on_progress: impl FnMut(progress::Progress) + Send,
     ) -> Result<Vec<String>, EncodeError> {
-        match run::run(&self.bin, args, cancel, self.options, on_progress).await {
-            Err(RunError::Failed { code, last_line }) => {
-                let detail = last_line
-                    .map(|l| sanitize(&l, paths))
-                    .unwrap_or_else(|| "no message".to_string());
-                let code = code.map_or("signal".to_string(), |c| c.to_string());
-                Err(EncodeError::Failed(format!(
-                    "FFmpeg exited with {code}: {detail}"
-                )))
+        let mut retried = false;
+        loop {
+            match run::run(&self.bin, args, cancel, self.options, &mut on_progress).await {
+                Err(RunError::Failed { code, .. })
+                    if !retried && run::stopped_from_outside(code) && !cancel.is_cancelled() =>
+                {
+                    retried = true;
+                }
+                Err(RunError::Failed { code, last_line }) => {
+                    let text = run::exit_text(code);
+                    return Err(EncodeError::Failed(match last_line {
+                        Some(l) => format!("{text}: {}", sanitize(&l, paths)),
+                        None => text,
+                    }));
+                }
+                other => return Ok(other?),
             }
-            other => Ok(other?),
         }
     }
 
@@ -248,6 +256,66 @@ mod tests {
         assert_eq!(max_volume(&log, "Parsed_volumedetect_4"), Some(-10.8));
         // No measurement (an empty track) is never taken as identical.
         assert_eq!(max_volume(&lines("nothing"), "Parsed_volumedetect_2"), None);
+    }
+
+    /// A fake FFmpeg that is stopped from outside on its first run (like
+    /// the 0xC000013A exit seen in a user's log) and succeeds on the next.
+    /// With `always`, it is stopped every time.
+    fn stopped_once(dir: &Path, always: bool) -> PathBuf {
+        let marker = dir.join("ran");
+        #[cfg(windows)]
+        {
+            let bin = dir.join("ffmpeg.bat");
+            let body = if always {
+                "@exit /b -1073741510\r\n".to_string()
+            } else {
+                format!(
+                    "@if exist \"{m}\" (echo second run 1>&2 & exit /b 0)\r\n@echo.>\"{m}\"\r\n@exit /b -1073741510\r\n",
+                    m = marker.display()
+                )
+            };
+            std::fs::write(&bin, body).unwrap();
+            bin
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let bin = dir.join("ffmpeg");
+            let body = if always {
+                "#!/bin/sh\nkill -TERM $$\n".to_string()
+            } else {
+                format!(
+                    "#!/bin/sh\nif [ -e '{m}' ]; then echo second run >&2; exit 0; fi\ntouch '{m}'\nkill -TERM $$\n",
+                    m = marker.display()
+                )
+            };
+            std::fs::write(&bin, body).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            bin
+        }
+    }
+
+    #[tokio::test]
+    async fn runs_again_once_after_an_outside_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let ff = Ffmpeg::new(stopped_once(dir.path(), false));
+        let lines = ff
+            .run_clean(&[], &[], &CancellationToken::new(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(lines.last().map(|l| l.trim()), Some("second run"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let ff = Ffmpeg::new(stopped_once(dir.path(), true));
+        let err = ff
+            .run_clean(&[], &[], &CancellationToken::new(), |_| {})
+            .await
+            .unwrap_err()
+            .to_string();
+        #[cfg(windows)]
+        assert_eq!(err, "FFmpeg was stopped by the system (0xC000013A)");
+        #[cfg(unix)]
+        assert_eq!(err, "FFmpeg was stopped by a signal");
     }
 
     #[test]
