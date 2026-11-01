@@ -22,7 +22,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["process"] }
 tokio-util.workspace = true
 ts-rs.workspace = true
-zstd = "0.13"
+zstd = "0.14"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["process", "macros", "rt-multi-thread"] }

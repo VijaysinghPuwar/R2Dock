@@ -12,6 +12,10 @@ Fixes the problems found in two weeks of activity logs from 0.5.0 and 0.5.1 on W
 - FFmpeg failures say what happened, for example "FFmpeg was stopped by the system (0xC000013A)" or "FFmpeg crashed (0xC0000005)", instead of "FFmpeg exited with -1073741510: no message".
 - An unfinished compression tools download, left when the app was closed during it, is deleted at the next start and before the next install. Before, it stayed in the tools folder for good (161 MB in one case).
 
+### Security
+
+- Updated zstd to 0.14.3 and zstd-safe to 8.2.0 (RUSTSEC-2026-0391, RUSTSEC-2026-0398, RUSTSEC-2026-0403; zstd unpacks the compression tools download), and ctutils to 0.4.7 (RUSTSEC-2026-0385, used only by the test S3 server).
+
 ## [0.5.1] - 2026-10-21
 
 Fixes glitches found in the activity logs and in a review of what happens when you move around the app while work is running.
