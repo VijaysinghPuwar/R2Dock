@@ -205,6 +205,38 @@ pub async fn run(
     }
 }
 
+/// Windows `STATUS_CONTROL_C_EXIT`: FFmpeg got Ctrl+C, a console close, a
+/// logoff, or a shutdown signal from something other than R2Dock (R2Dock
+/// stops it with `TerminateJobObject`, which gives exit code 1).
+pub const WINDOWS_CONTROL_C_EXIT: u32 = 0xC000_013A;
+
+#[allow(clippy::cast_sign_loss)]
+fn unsigned(code: i32) -> u32 {
+    code as u32
+}
+
+/// Whether FFmpeg was stopped from outside instead of failing on its own,
+/// so running it again can succeed: killed by a signal on macOS and Linux,
+/// or stopped with `STATUS_CONTROL_C_EXIT` on Windows.
+pub fn stopped_from_outside(code: Option<i32>) -> bool {
+    code.is_none_or(|c| unsigned(c) == WINDOWS_CONTROL_C_EXIT)
+}
+
+/// How FFmpeg ended, in words. Windows status codes (crashes, stop
+/// signals) are shown in hex as Windows documents them.
+pub fn exit_text(code: Option<i32>) -> String {
+    match code {
+        None => "FFmpeg was stopped by a signal".to_string(),
+        Some(c) if unsigned(c) == WINDOWS_CONTROL_C_EXIT => {
+            format!("FFmpeg was stopped by the system (0x{:08X})", unsigned(c))
+        }
+        Some(c) if unsigned(c) >= 0xC000_0000 => {
+            format!("FFmpeg crashed (0x{:08X})", unsigned(c))
+        }
+        Some(c) => format!("FFmpeg exited with {c}"),
+    }
+}
+
 /// Replace local paths in an FFmpeg message with just the file names, so
 /// messages never show the user's folders.
 pub fn sanitize(line: &str, paths: &[&Path]) -> String {
@@ -233,6 +265,25 @@ mod tests {
         let line = "file:/Users/someone/Music/Book One/part 1.mp3: Invalid data found";
         assert_eq!(sanitize(line, &[p]), "file:part 1.mp3: Invalid data found");
         assert_eq!(sanitize("no paths here", &[p]), "no paths here");
+    }
+
+    #[test]
+    fn exit_codes_in_words() {
+        // -1073741510 is 0xC000013A, seen in a user's activity log.
+        assert!(stopped_from_outside(Some(-1_073_741_510)));
+        assert!(stopped_from_outside(None));
+        assert!(!stopped_from_outside(Some(1)));
+        assert!(!stopped_from_outside(Some(-1_073_741_819)));
+        assert_eq!(
+            exit_text(Some(-1_073_741_510)),
+            "FFmpeg was stopped by the system (0xC000013A)"
+        );
+        assert_eq!(
+            exit_text(Some(-1_073_741_819)),
+            "FFmpeg crashed (0xC0000005)"
+        );
+        assert_eq!(exit_text(Some(1)), "FFmpeg exited with 1");
+        assert_eq!(exit_text(None), "FFmpeg was stopped by a signal");
     }
 
     /// FFmpeg runs below normal priority, as itself (same process id).

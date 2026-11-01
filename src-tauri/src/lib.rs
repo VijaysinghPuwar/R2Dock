@@ -164,6 +164,11 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Find and check the compression tools in the background.
     let handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
+        let sweep = handle.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            sweep.state::<AppState>().compression.sweep_leftovers();
+        })
+        .await;
         let state = handle.state::<AppState>();
         state.compression.refresh(&state).await;
     });
